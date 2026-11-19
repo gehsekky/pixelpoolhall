@@ -1,0 +1,21 @@
+{
+  "name": "pixelpoolhall",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "test": "pnpm -r test",
+    "bench": "pnpm -r bench",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "oxlint"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "oxlint": "^1.94.0",
+    "typescript": "~7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

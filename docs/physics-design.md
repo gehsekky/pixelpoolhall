@@ -1,0 +1,274 @@
+# Physics Engine — Design
+
+*Draft, November 19, 2026. See also: [billiards-game-plan.md](billiards-game-plan.md), [pooltool-analysis.md](pooltool-analysis.md), [tailuge-analysis.md](tailuge-analysis.md).*
+
+## Goals
+
+1. **Accuracy first.**
+   - Simulate analytically between events, so no time steps are involved and no error builds up.
+   - Every model and constant cites a paper or a measurement.
+2. **Verifiable.** Automated tests against pooltool fixtures, and later against real measured shots.
+3. **Fast enough for AI search.** Target: under 1 ms for a typical shot, and at least 1,000 shots per second in a web worker.
+4. **Headless and portable.** Pure TypeScript with zero runtime dependencies; runs in a browser, a worker or Node.
+5. **Swappable models.** Every interaction (ball–ball, cushion, pocket, and so on) sits behind an interface, so models can be compared with each other.
+
+**Not goals (for now):**
+- Bit-for-bit identical results across browsers.
+- Snooker or carom tables. The geometry supports them, but they're out of scope.
+
+---
+
+## Conventions
+
+| Item | Convention |
+|---|---|
+| Units | SI throughout: meters, kilograms, seconds, radians |
+| Frame | Table frame: origin at the bottom-left corner of the playing surface, `x` along the long axis, `y` across, `z` up. The playing surface is `z = 0`, so a ball at rest has `z = R` |
+| Number type | IEEE float64 only. **Never** `Math.fround`, and no rounding mid-shot |
+| Ball state | `r` (position), `v` (velocity), `ω` (angular velocity), each a 3-vector; `s` is the motion state; `t0` is the time the current segment starts |
+| Slip velocity | `u = v + R·(ẑ × ω)`, the velocity of the contact point with the cloth (horizontal part) |
+
+---
+
+## Module layout
+
+```
+packages/physics/src/
+  math/        vec3 helpers (no allocation), polynomial roots (quadratic, cubic, quartic + polish)
+  params/      BallParams, TableSpec, CueSpec, ModelConfig — all defaults with citations
+  table/       geometry builder: linear segments, jaw arcs, pockets (from TableSpec)
+  motion/      motion states, trajectory coefficients, transition times, evaluate(t)
+  detect/      next-event finders per event type
+  resolve/     collision models per interaction (interfaces + implementations)
+  engine/      event loop, caches, simultaneity, result assembly
+  result/      ShotResult: event log + trajectory segments + sampling API
+  index.ts     public API
+```
+
+**Public API (sketch):**
+
+```ts
+simulate(table: TableState, shot: CueShot, config?: EngineConfig): ShotResult
+
+interface ShotResult {
+  events: Event[]                 // ordered: time, type, involved ids, pre/post states
+  segments: TrajectorySegment[][] // per ball: piecewise-analytic motion
+  final: TableState
+  positionAt(ballId: number, t: number): Vec3   // exact evaluation for rendering
+}
+```
+
+---
+
+## Motion states and equations
+
+Each ball is always in exactly one state. Within a state, the acceleration is constant, so **position is a polynomial of degree ≤ 2 in time**.
+
+`g` is gravity; `μs`, `μr` and `μsp` are the sliding, rolling and spin coefficients.
+
+| State | Condition | Equations of motion (τ = t − t0) | Ends when |
+|---|---|---|---|
+| **Sliding** | `|u| > 0` | `û` (the slip direction) is constant. `v(τ) = v0 − μs·g·τ·û`, `r(τ) = r0 + v0·τ − ½μs·g·τ²·û`, `ω⊥(τ) = ω⊥0 − (5μs·g/2R)·τ·(ẑ × û)` | `τ = 2|u0| / (7μs·g)` → **rolling** |
+| **Rolling** | `u = 0`, `|v| > 0` | `v(τ) = v0 − μr·g·τ·v̂0`, `r(τ) = r0 + v0·τ − ½μr·g·τ²·v̂0`, `ω⊥ = (ẑ × v)/R` | `τ = |v0| / (μr·g)` → **spinning** or **stationary** |
+| **Spinning** | `v = 0`, `ωz ≠ 0` | `ωz(τ) = ωz0 − sign(ωz0)·(5μsp·g/2R)·τ` | `τ = |ωz0|·2R / (5μsp·g)` → **stationary** |
+| **Stationary** | — | — | Only a collision ends it |
+| **Airborne** | `z > R` or `vz > 0` | `r(τ) = r0 + v0·τ − ½g·τ²·ẑ`; ω constant | Lands on the table (`z = R`, a quadratic) |
+| **Pocketed / off table** | — | Out of play | — |
+
+In all states that touch the table, `ωz` decays independently at the spin-decay rate: `ωz(τ) = ωz0 − sign(ωz0)·(5μsp·g/2R)·τ`, clamped at zero.
+
+**Stored per segment:** `t0`, `tEnd`, the state, and coefficients `c0`, `c1`, `c2` (each a 3-vector) such that `r(t) = c0 + c1·τ + c2·τ²`, plus the data needed to evaluate `ω(τ)`.
+
+Detection and rendering both read these coefficients. Balls are **not** moved forward at every event, unlike pooltool's `evolve`. A ball gets a new segment only when an event involves it.
+
+---
+
+## Events
+
+| Event | Detection equation | Notes |
+|---|---|---|
+| Transition (slide→roll, roll→spin, roll→stop, spin→stop) | Closed form (table above) | Stored per ball in the transition cache |
+| Ball–ball | `|p1(τ) − p2(τ)|² = (2R)²` → **quartic** in τ | Keep the smallest real root `≥ 0` where the balls are approaching: `(p1 − p2)·(ṗ1 − ṗ2) < 0` |
+| Ball–straight cushion | The ball center reaches distance `R + r_nose` from the cushion-nose cylinder. Projected onto the plane perpendicular to the cushion axis, this gives a **quartic** | Contact must lie within the segment; ball must be approaching |
+| Ball–jaw (arc) | Distance to the arc center equals `R + r_jaw` → **quartic** | Contact must lie within the arc's angle range |
+| Ball–pocket | The ball center crosses the pocket's capture boundary → **quartic** (Phase 1); the pocket interior model (Phase 3) | See *Pockets* below |
+| Ball–table (landing) | `z(τ) = R` → **quadratic** | Airborne only |
+| Ball leaves the table | Crosses the rail-top boundary while airborne | Phase 3 |
+| Cue–ball | `t = 0` | Always the first event |
+
+### Root solving
+
+- **Quadratics:** use the numerically stable form (no cancellation when `b² ≫ 4ac`).
+- **Quartics: our own solver** (decided 2026-11-19), written clean-room: no reference to Algorithm 1010's code or pooltool's translation of it.
+  - **Approach:**
+    1. Scale the polynomial so its coefficients are well conditioned.
+    2. Solve the depressed form with Ferrari's or Descartes' method, picking the resolvent-cubic root that is most numerically stable.
+    3. Polish each root with Newton's method on the original polynomial.
+    4. Handle the cases where the polynomial drops to a lower degree, and near-double roots, explicitly.
+  - **Testing:** check it against a high-precision reference (roots computed with BigInt or arbitrary-precision arithmetic, inside the tests only) over a large randomized set plus hand-picked hard cases: near-double roots, the "Newton's cradle" equal-velocity case, tangent (grazing) contacts, and very large or very small coefficients.
+  - **Benchmark target:** at least 2 million solves per second in V8 (the JavaScript engine in Chrome and Node).
+  - **As built (2026-11-19, `packages/physics/src/math/roots/`):**
+    - Ferrari plus refinement of the factorization (the cubic uses Cardano/Viète plus refinement).
+    - A whole-set backward-error certificate: certified when it's ≤ 4 eps.
+    - If the certificate fails, an **Aberth–Ehrlich fallback** started from Newton-polygon estimates (Aberth 1973, Bini 1996), so roots spread over many orders of magnitude are handled.
+    - Newton polishing is kept only when it doesn't worsen the whole root set. Polishing each root on its own pulled the two members of a close pair together.
+  - **Measured accuracy** (300 cases per family, against exact BigInt reference roots):
+    - Worst forward error: ≤ 2.3 × (eps × condition number) for every family: four real roots spread over 6 orders of magnitude, mixed real and complex, coefficients spanning 20 orders of magnitude, close pairs, roots near 1e±60/80, and ball–ball collision quartics.
+    - Worst backward error: ≤ 4 eps.
+    - No genuine real-root count errors. One cubic close pair can't be decided in float64: its computed roots are exact for a polynomial within 4 eps of the input.
+  - **Measured speed:** 2.0–2.5 M solves/s on realistic families (Node 26). The fallback runs on < 1% of cases, except pathological coefficients spanning 20 orders of magnitude (24%, 1.0 M solves/s).
+  - **Metric note:** backward error is measured relative to the size of each coefficient's terms. Measuring against the coefficient's own value isn't attainable: even correctly rounded exact roots score 85+ eps on it when a coefficient is small through cancellation (verified).
+  - **Consequence for collision detection:** near-tangent contacts can legitimately come back as a complex pair with a tiny imaginary part. The detector must treat near-real roots as candidate contacts (`ε_contact` above).
+  - **Still to do:** compare against NumPy's `roots` (LAPACK) on the same cases. Then **polish every candidate root** with 1–3 Newton iterations on the original distance function.
+- **Reducing the degree:** when the leading coefficients are zero (two balls with the same acceleration, or a stationary ball against a rolling one), drop to the cubic or quadratic exactly rather than passing near-zero values to the quartic solver.
+- **Near-tangent (thin) contacts:** if the polished root's minimum distance is within `ε_contact` of `2R`, accept it as a contact even when the discriminant is slightly negative. This makes the thinnest cuts register reliably, which tailuge can miss entirely.
+- **Tolerances:**
+  - `ε_contact = 1e-9 m` (about 1/30,000 of a ball radius);
+  - `ε_time = 1e-12 s` for deciding two events are simultaneous.
+
+  Both are named constants with tests.
+
+### Caching and invalidation
+
+- **Pair cache:** `nextTime[i][j]` for every ball pair, plus `nextCushion[i]`, `nextPocket[i]` and `nextTransition[i]` for each ball.
+- **After an event involving a set of balls:**
+  - recompute only the entries that involve those balls;
+  - everything else stays valid, because the other balls' trajectories haven't changed.
+- **Finding the next event:** a min-heap keyed by time, with lazy deletion (stale entries are tagged with a version number and skipped).
+- **Quick rejection:** before solving a pair's quartic, check whether the two balls' reachable regions (a bounding radius over the remaining segment) can overlap at all. If not, skip the solve.
+
+### Simultaneous events
+
+Events whose times fall within `ε_time` of each other are simultaneous.
+
+- **Priority:** cue strike → transitions → pockets → leaving the table → collisions (pooltool's tiers).
+- **Within the collisions tier:**
+  - resolve in order of decreasing relative kinetic energy;
+  - after each resolution, invalidate and recompute the affected entries before taking the next event.
+- **Frozen balls (touching at rest):** contacts with zero gap are detected explicitly. They produce zero-time collision events, guarded by an "approaching" test so the same contact can't loop forever.
+- **Hard cap:** a maximum event count per shot (for example 10,000). If it's exceeded, the engine stops all balls and reports a diagnostic **instead of throwing**.
+- **Future (Phase 3+):** a simultaneous multi-contact solver for the break, run as an alternative model and compared against video.
+
+### Overlap guard
+
+Before resolving a contact, move the ball back to exactly `contact distance + MIN_GAP` (`MIN_GAP = 1e-9 m`), using pooltool's `make_kiss` approach. This prevents tunneling and repeat collisions caused by rounding.
+
+---
+
+## Interaction models
+
+Each interaction is an interface with selectable implementations. The defaults are in **bold**.
+
+| Interaction | Models | Source |
+|---|---|---|
+| Cue → ball | **Instantaneous point contact** (cue mass, tip radius, elevation, tip offset) + **squirt** | Alciatore TP A-30, TP A-31; pooltool |
+| Ball–ball | **Frictional inelastic impulse with speed-dependent throw friction** `μ = a + b·e^(−c·v_rel)` (a=0.00995, b=0.108, c=1.088); Mathavan 2014 (numerical, high accuracy); frictionless elastic (for testing) | Alciatore TP A-14; Mathavan et al. 2014 |
+| Ball–cushion (straight and jaw) | **Stronge compliant** (closed form); Mathavan 2010; Han 2005 | Stronge 2018; Mathavan et al. 2010; Han 2005 |
+| Ball–table landing | **Frictional inelastic** | Alciatore TP A-14 |
+| Ball–pocket | Phase 1: **capture circle** (as in pooltool). Phase 3: **interior model** (see below) | — |
+
+**The interface has two parts:**
+- `resolve(state, params) → newState`: a pure function with no allocation.
+- `validRange`: the input ranges where the model is trusted, which feed into testing.
+
+---
+
+## Table geometry
+
+The table is generated from a `TableSpec` (all values in meters):
+- **Playing surface:** default is a **9-ft table, 2.54 × 1.27 m** (WPA). 7-ft and 8-ft are presets.
+- **Cushions:** nose height (≈ 0.635·2R, per WPA, about 63–64% of ball diameter) and nose radius.
+- **Pockets, per type (corner and side):** mouth width, facing angle, jaw radius, setback (how far the pocket sits behind the cushion line), shelf depth, drop-edge radius.
+
+The geometry builder outputs:
+- straight cushion segments;
+- circular jaw arcs;
+- pocket definitions.
+
+This follows pooltool's layout approach, re-implemented in TypeScript with Apache-2.0 attribution if any code is ported.
+
+### Pockets (Phase 3 interior model)
+
+The pocket is modeled as real geometry:
+- **Facings:** cushion segments angled at the facing angle; ball contact uses the cushion model.
+- **Jaws:** arcs (already Phase 1).
+- **Shelf:** the slate surface between the mouth and the drop edge, so a ball can roll onto the shelf and stop there.
+- **Drop edge:** a circular edge. The ball tips over when its contact point leaves the slate; it then pivots about the edge and becomes airborne.
+- **Back wall / liner:** an inelastic surface that can bounce a fast ball back toward the drop edge, so it can rattle out.
+
+**Outcome:** the ball is pocketed once its center falls below `z = −R` inside the pocket volume.
+
+**Validation:** compare the speed and angle at which balls rattle out against measurements; Alciatore has pocket-tolerance data.
+
+---
+
+## Parameters
+
+All parameters live in one typed registry. Each entry records its **value, unit, source (citation) and uncertainty**. Starting defaults (pooltool / WPA), to be refined by fitting:
+
+| Parameter | Default | Source |
+|---|---|---|
+| Ball mass `m` | 0.170 kg | WPA spec range 5.5–6 oz |
+| Ball radius `R` | 0.028575 m | WPA 2¼″ |
+| Sliding friction `μs` | 0.20 | pooltool / Alciatore |
+| Rolling resistance `μr` | 0.010 | pooltool / Alciatore |
+| Spin decay `μsp` | ≈ 0.444·R | pooltool |
+| Ball–ball restitution `e_b` | 0.95 | pooltool / Alciatore |
+| Cushion restitution `e_c` | 0.85 | pooltool |
+| Cushion friction `f_c` | 0.20 | pooltool |
+| Stronge `ω` ratio | 1.8 | pooltool default |
+| Table restitution `e_t` | 0.5 | pooltool |
+| Cue end mass | (per cue spec) | Alciatore TP A-31 |
+
+---
+
+## Validation strategy
+
+1. **Unit tests per model.**
+   - Conservation checks: energy never increases; momentum is conserved in ball–ball collisions; angular momentum is conserved about the contact point where it should be.
+   - Limiting cases: frictionless gives a 90° cut-angle rule; a stun shot means the cue ball stops dead.
+   - Symmetry under reflection and rotation.
+2. **Property tests.** Generate random shots and check invariants: no overlaps, events in order, finite values, and simulation always finishes.
+3. **Reference tests against pooltool.**
+   - A Python harness runs pooltool on a fixed library of shots (break, cuts, banks, draw/follow/english, thin cuts, frozen balls, jaw rattles) and exports the events and final states as JSON.
+   - Tolerances:
+     - event times within `1e-6 s`;
+     - final positions within `0.1 mm` for shots with ≤ 5 events.
+   - Divergence on long chaotic shots like the break is expected; those are compared statistically.
+4. **Tests against measured data (Phase 3).**
+   - Alciatore's published measurements: throw curves, squirt, cushion rebound angles.
+   - Our own high-speed video, recorded where possible.
+   - Fit parameters by least squares, and publish the fit results as part of the docs.
+5. **Accuracy report page.** Publish the validation results on the site. "Most accurate" should be a claim anyone can check.
+
+---
+
+## Performance plan
+
+- **Memory:**
+  - Ball and segment data in preallocated `Float64Array`s, or plain objects with numeric fields.
+  - **No allocation inside the event loop.**
+- **Reuse:**
+  - Scratch buffers for the vector math.
+  - Root solvers that return results through out-parameters instead of new arrays.
+- **Less work:** caching as described above, plus quick rejection of pairs that can't meet.
+- **Workers:** the AI search runs in a web worker; several workers can split the candidate shots.
+- **Benchmarks** in CI: the break, a typical 8-ball shot, and 1,000 random shots. Track how long each takes and how many events per second the engine processes.
+
+---
+
+## Determinism and multiplayer
+
+- Within one build on one JavaScript engine, the simulation is deterministic: the same inputs give the same outputs, which matters for replays and tests.
+- **Across browsers it may not be:** `Math.sin`, `cos`, `exp`, `atan2` and `sqrt` aren't all guaranteed to give identical results. So multiplayer **always syncs final positions**, and a replay stores its event log.
+- *Optional later:* a deterministic math library if a server-authoritative mode needs it.
+
+---
+
+## Open questions
+
+1. ~~Quartic solver source.~~ **Decided:** our own clean-room solver.
+2. **Pocket interior model.** Which literature or measurements to base it on, and how much geometric detail is needed.
+3. **Multi-contact break model.** Research is needed; keep the one-at-a-time resolution as the baseline.
+4. **Cushion contact height.** Fixed, or varying with speed, decided from data.
+5. **Cloth effects** (nap, slope, friction changing over a session). Are they worth adding, and would players want them as optional settings?

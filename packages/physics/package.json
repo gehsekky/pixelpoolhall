@@ -1,0 +1,17 @@
+{
+  "name": "@pixelpoolhall/physics",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Event-based billiards physics engine. Pure TypeScript, no runtime dependencies.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "vitest bench --run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

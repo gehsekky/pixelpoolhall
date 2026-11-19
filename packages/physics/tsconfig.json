@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // Numeric hot paths index Float64Arrays constantly; per-access undefined
+    // checks would add noise (and `!`s) without catching real bugs. Bounds are
+    // covered by tests instead.
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["src", "test"]
+}
