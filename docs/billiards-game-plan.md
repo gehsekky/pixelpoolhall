@@ -26,6 +26,7 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 | pooltool | **Apache-2.0** | Reference implementation and porting source | Keep the copyright and license notices in `THIRD_PARTY_NOTICES` and in file headers; mark files we change |
 | Algorithm 1010 (quartic solver, ACM TOMS 2020), code by C. De Michele | **Restrictive** (checked 2026-11-19 in the `quartic_C` and `quarticpp` READMEs): copies are allowed only for personal or classroom use, and "to post on servers or to redistribute… requires prior specific permission" | **Do not port the author's code, or pooltool's translation of it** (pooltool's Apache license can't override the original terms) | **Decided:** we write our own quartic solver (see physics-design.md) |
 | Published papers (Han 2005, Mathavan 2010/2014, Stronge, Alciatore TPs, Aberth 1973, Bini 1996) | Copyright covers the text, not the math | Implement the equations ourselves | Cite them in code and docs |
+| NumPy 2.5.5 (BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0; bundles OpenBLAS, BSD-3-Clause, and the GCC runtime under the GCC Runtime Library Exception) | Permissive (verified 2026-11-19 from the wheel metadata and license file) | Reference harness only (`tools/reference`): accuracy comparison for our solvers. Not shipped | None for shipped code |
 | Dev tools: TypeScript (Apache-2.0), Vitest (MIT), oxlint (MIT), @types/node (MIT) | Permissive (verified 2026-11-19 from each package.json) | Build and test only; not shipped to players | None for shipped code |
 
 **Our project license: MIT** (decided 2026-11-19).
@@ -93,7 +94,7 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 - ✅ Repo: pnpm workspace, TypeScript, Vitest, oxlint (`packages/physics`). Still to do: `game` and `web` packages, and CI.
 - ✅ MIT `LICENSE` (copyright gehsekky) and `THIRD_PARTY_NOTICES.md`.
 - ✅ Our own quadratic, cubic and quartic solvers, verified against exact roots. See physics-design.md, "Root solving".
-- To do: the NumPy comparison for the solvers, run from a Python environment that will also host the pooltool reference harness.
+- ✅ Compared with NumPy `roots` (LAPACK): ours is more accurate on every test family, and NumPy loses all accuracy on 43% of wide-range cases. The Python reference environment lives in `tools/reference`.
 - **Reference harness:** a Python script that runs pooltool on a library of shots and exports JSON fixtures, so our engine can be tested against them automatically.
 
 ### Phase 1: Physics core (2D, on the table)

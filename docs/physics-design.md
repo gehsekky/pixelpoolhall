@@ -119,7 +119,23 @@ Detection and rendering both read these coefficients. Balls are **not** moved fo
   - **Measured speed:** 2.0–2.5 M solves/s on realistic families (Node 26). The fallback runs on < 1% of cases, except pathological coefficients spanning 20 orders of magnitude (24%, 1.0 M solves/s).
   - **Metric note:** backward error is measured relative to the size of each coefficient's terms. Measuring against the coefficient's own value isn't attainable: even correctly rounded exact roots score 85+ eps on it when a coefficient is small through cancellation (verified).
   - **Consequence for collision detection:** near-tangent contacts can legitimately come back as a complex pair with a tiny imaginary part. The detector must treat near-real roots as candidate contacts (`ε_contact` above).
-  - **Still to do:** compare against NumPy's `roots` (LAPACK) on the same cases. Then **polish every candidate root** with 1–3 Newton iterations on the original distance function.
+  - **Compared with NumPy 2.5.5 `roots`** (LAPACK companion-matrix eigenvalues via OpenBLAS), on the same 300 cases per family against the same exact roots (`packages/physics/test/numpy-comparison.ts`):
+
+    | Quartic family | Worst forward error, ours / NumPy (× eps·cond) | Worst backward error, ours / NumPy (eps) |
+    |---|---|---|
+    | 4 real, spread | 1.2 / 69 | 2.1 / 117 |
+    | 2 real + pair | 1.9 / 64 | 1.9 / 152 |
+    | 2 pairs | n/a | 3.0 / 290 |
+    | uniform coefficients | 1.4 / 9.7 | 2.6 / 24 |
+    | wild coefficients | 1.6 / **5.6e13** | 2.1 / **1.1e14** |
+    | close real pair | 2.0 / 14 | 4.0 / 46 |
+    | extreme scale | 2.2 / 11 | 2.9 / 23 |
+    | ball–ball collision | 0.5 / 2.4 | 2.3 / 29 |
+
+    - Ours is more accurate on every family, by 4–5× at the median and by 10–100× in the worst case.
+    - On wild coefficients NumPy loses all accuracy on 129 roots (43% of cases; the companion matrix can't represent roots spread over many orders of magnitude). It also gets one close-pair real-root count wrong. Ours has neither failure.
+    - Cubic results are similar: our worst is ≤ 2.3 / ≤ 3.6 eps; NumPy's is 38 / 43 eps, and it loses 15 roots on wild coefficients.
+  - **Still to do:** **polish every candidate root** with 1–3 Newton iterations on the original distance function.
 - **Reducing the degree:** when the leading coefficients are zero (two balls with the same acceleration, or a stationary ball against a rolling one), drop to the cubic or quadratic exactly rather than passing near-zero values to the quartic solver.
 - **Near-tangent (thin) contacts:** if the polished root's minimum distance is within `ε_contact` of `2R`, accept it as a contact even when the discriminant is slightly negative. This makes the thinnest cuts register reliably, which tailuge can miss entirely.
 - **Tolerances:**

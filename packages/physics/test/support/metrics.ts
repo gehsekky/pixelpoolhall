@@ -23,6 +23,7 @@ import {
   polyFromRoots,
   realRoots,
   sub,
+  type ExactRoot,
   toNumber,
   type Poly,
   type Rat,
@@ -69,11 +70,16 @@ function absCoeffPoly(p: Poly): Poly {
   return p.map(abs)
 }
 
-export function analyze(coeffs: number[], computed: ComputedRoots): Report {
+/** Exact real roots of a float64 polynomial (pass to analyze to reuse them). */
+export function exactRealRoots(coeffs: number[]): ExactRoot[] {
+  return realRoots(toPoly(coeffs))
+}
+
+export function analyze(coeffs: number[], computed: ComputedRoots, exactRoots?: ExactRoot[]): Report {
   const p = toPoly(coeffs)
   const dp = derivative(p)
   const pAbs = absCoeffPoly(p)
-  const exact = realRoots(p)
+  const exact = exactRoots ?? realRoots(p)
 
   const roots: RootReport[] = exact.map(({ lo, hi }) => {
     const r = ratMid(lo, hi)

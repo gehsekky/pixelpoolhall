@@ -40,4 +40,5 @@ pnpm test                          # suite: hand-built hard cases + seeded rando
 node test/accuracy-report.ts 300   # full report, quartic (slow: exact arithmetic)
 DEGREE=3 node test/accuracy-report.ts 300   # cubic
 node test/speed-report.ts          # throughput and fallback rate per family
+node test/numpy-comparison.ts 300  # side by side with numpy.roots (needs tools/reference venv)
 ```
