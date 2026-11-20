@@ -48,7 +48,13 @@ Where the rules leave room, or a simulation can't reproduce the situation exactl
 
 ## Options
 
-- **`rules.callShots`** (8-ball, default on). With calls off, which is not a WPA rule, the first legal ball pocketed counts as called, in the pocket it went in; that includes the 8. The 3D view runs with calls off until it has a call-shot picker.
+- **`rules.callShots`** (8-ball, default on). With calls off, which is not a WPA rule, the first legal ball pocketed counts as called, in the pocket it went in; that includes the 8.
+
+## Calling shots in the 3D view
+
+- **Auto-call (WPA 1.7, "obvious" shots).** While you aim, the call follows the aim guide: the legal ball the guide hits, and the pocket within 20° of that ball's path. Shooting with an auto call means you intended that shot.
+- **Manual call.** Clicking a ball, then a pocket, overrides the auto call; this is how you call banks and combinations. There are also **Call safety** and **Clear call** buttons. Either set the call before aiming, or lock the aim (click) first.
+- **No shot without a complete call.** The view won't shoot until a call is complete, so a missing call can't cost the rack.
 
 ## Not modeled
 

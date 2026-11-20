@@ -117,7 +117,8 @@ Because the game is free and self-hosted, the licenses of the things we use set 
   - Exact replay of the simulated shot, with balls spinning from the physics' angular velocity.
   - Rulings and pending choices shown in the HUD.
   - The 2D debug view moved to `debug.html`.
-  - Still to do: a room background, a call-shot picker (8-ball currently runs with calls off), touch controls.
+  - ✅ Call-shot picker: the call follows the aim guide, or you click a ball and a pocket; there's also a safety call. 8-ball plays with WPA called shots.
+  - Still to do: a room background, touch controls.
 - ✅ **8-ball and 9-ball rules** (`packages/game`), from the WPA Rules of Play and Regulations effective 2026-10-21. Covers the break and its options, open table and groups, called shots and safeties, push out, the three-ball break rule, three consecutive fouls, spotting, and cue ball in hand (including the head-string restrictions). It also includes WPA racks and a `Game` session that runs shots through the physics and applies each ruling. See [rules.md](rules.md).
 - Computer opponent using shot search, with difficulty levels. (Until then, two players share the mouse.)
 

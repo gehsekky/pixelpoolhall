@@ -15,12 +15,13 @@
  *   - G toggles the aim guide;
  *   - Space skips the replay.
  */
-import { CUE, FOUL_TEXT, Game, type Discipline, type Option, type ShotRecord } from "@pixelpoolhall/game"
+import { CUE, FOUL_TEXT, Game, legalTargets, type Call, type Discipline, type Option, type ShotRecord } from "@pixelpoolhall/game"
 import { stateAtTime } from "@pixelpoolhall/physics"
 import * as THREE from "three"
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js"
 import { createBall, spin } from "./balls3d.ts"
+import { POCKET_NAMES, pocketToward } from "./calls.ts"
 import { createCue, poseCue } from "./cue3d.ts"
 import { buildTable } from "./table3d.ts"
 
@@ -67,6 +68,52 @@ const aim = { phi: 90, theta: 0, a: 0, b: 0 }
 let aimLocked = false
 let showGuide = true
 
+/** The current call (8-ball). Auto calls follow the aim guide until the player picks one. */
+let call: Call | null = null
+let callManual = false
+
+/** Whether the next shot needs a call (8-ball after the break, WPA 4.6). */
+const needsCall = () => {
+  const s = game.state
+  return game.discipline === "8-ball" && !s.isBreak && s.rules.callShots && s.winner === null && !s.pending
+}
+const legalNow = () => legalTargets(game.state, game.state.shooter, game.objectBalls())
+
+function setCall(c: Call | null, manual: boolean): void {
+  const same = JSON.stringify(c) === JSON.stringify(call) && manual === callManual
+  call = c
+  callManual = manual
+  if (!same) updateHud()
+}
+
+/** A short click on a ball or a pocket picks the call. Returns false if the click hit neither. */
+function pickCall(e: PointerEvent): boolean {
+  if (!needsCall()) return false
+  pointerTo(e)
+  const objects = [...balls].filter(([id, m]) => id !== CUE && m.visible).map(([, m]) => m)
+  const hitBall = raycaster.intersectObjects(objects)[0]
+  if (hitBall) {
+    const id = hitBall.object.name
+    if (!legalNow().has(id)) {
+      lastNotes = [`The ${id} isn't a legal ball to call.`]
+      updateHud()
+      return true
+    }
+    const pocket = call && call !== "safety" ? call.pocket : ""
+    setCall({ ball: id, pocket }, true)
+    return true
+  }
+  const p = onBallPlane(e)
+  if (!p) return false
+  const pocket = game.table.pockets.find((pk) => Math.hypot(p.x - pk.center[0], p.y - pk.center[1]) < pk.radius + 0.04)
+  if (!pocket) return false
+  const ball = call && call !== "safety" ? call.ball : ""
+  setCall({ ball, pocket: pocket.id }, true)
+  return true
+}
+
+const callComplete = () => call === "safety" || (call !== null && call.ball !== "" && call.pocket !== "")
+
 type Mode =
   | { kind: "aim" }
   | { kind: "draw"; startY: number; startX: number; pull: number }
@@ -81,7 +128,7 @@ const IDLE_GAP = 0.012
 const speedFor = (pull: number) => 0.15 + (MAX_SPEED - 0.15) * (pull / MAX_PULL) ** 2
 
 function newGame(discipline: Discipline): void {
-  game = new Game({ discipline, seed: (Math.random() * 2 ** 32) >>> 0, rules: { callShots: false } })
+  game = new Game({ discipline, seed: (Math.random() * 2 ** 32) >>> 0, })
   if (tableGroup) scene.remove(tableGroup)
   const t = buildTable(game.table, game.spec)
   tableGroup = t.group
@@ -231,12 +278,15 @@ canvas.addEventListener("pointerup", (e) => {
   if (e.button !== 0) return
   if (mode.kind === "draw") {
     const moved = Math.hypot(e.clientX - mode.startX, e.clientY - mode.startY)
-    if (mode.pull > 0.01) {
+    if (mode.pull > 0.01 && needsCall() && !callComplete()) {
+      lastNotes = ["Call a ball and a pocket first (click them), or call Safety (WPA 4.6)."]
+      mode = { kind: "aim" }
+    } else if (mode.pull > 0.01) {
       const V0 = speedFor(mode.pull)
       mode = { kind: "stroke", pull: mode.pull, V0, t: 0, dur: Math.min(0.15, Math.max(0.04, (mode.pull + IDLE_GAP) / (V0 * 0.6))) }
       aimLocked = false
     } else {
-      if (moved < 4) aimLocked = !aimLocked
+      if (moved < 4 && !pickCall(e)) aimLocked = !aimLocked
       mode = { kind: "aim" }
     }
     updatePower()
@@ -384,6 +434,9 @@ const pushOut = $<HTMLInputElement>("pushout")
 const pushOutLabel = $("pushout-label")
 const powerBar = $("power-bar")
 const strikeText = $("strike")
+const callButtons = $("call")
+$<HTMLButtonElement>("call-safety").onclick = () => setCall("safety", true)
+$<HTMLButtonElement>("call-clear").onclick = () => setCall(null, false)
 
 const OPTION_TEXT: Record<Option, string> = {
   accept_table: "Accept the table",
@@ -416,10 +469,19 @@ function updateHud(): void {
     if (s.cueBallInHand === "table") line += " · ball in hand (drag the cue ball)"
     parts.push(line)
     if (game.discipline === "8-ball") {
-      parts.push(s.groups ? `${p(0)}: ${s.groups[0]} · ${p(1)}: ${s.groups[1]}` : "Open table · calls off (any legal ball counts)")
+      parts.push(s.groups ? `${p(0)}: ${s.groups[0]} · ${p(1)}: ${s.groups[1]}` : "Open table")
     } else {
       const lowest = [...game.objectBalls()].sort((x, y) => +x - +y)[0]
       if (lowest) parts.push(`Lowest ball: ${lowest}`)
+    }
+    if (needsCall()) {
+      const text =
+        call === "safety"
+          ? "Safety"
+          : call && (call.ball || call.pocket)
+            ? `${call.ball ? `${call.ball}-ball` : "(click a ball)"} → ${call.pocket ? POCKET_NAMES[call.pocket] : "(click a pocket)"}`
+            : "none — aim at a ball, or click a ball and a pocket"
+      parts.push(`Call: ${text}${call && !callManual ? " (auto)" : ""}`)
     }
     if (aimLocked) parts.push("Aim locked (click to unlock)")
   }
@@ -450,6 +512,7 @@ function updateHud(): void {
     }
     decisions.append(b)
   }
+  callButtons.hidden = !needsCall() || mode.kind === "replay"
   pushOutLabel.hidden = !(s.pushOutAvailable && !s.pending && s.winner === null)
   if (pushOutLabel.hidden) pushOut.checked = false
   updatePower()
@@ -467,6 +530,27 @@ const ghost = new THREE.Mesh(
   new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, side: THREE.DoubleSide }),
 )
 scene.add(guideLine, objLine, ghost)
+
+const callBallMarker = new THREE.Mesh(
+  new THREE.RingGeometry(0.034, 0.039, 48),
+  new THREE.MeshBasicMaterial({ color: 0xffd54a, side: THREE.DoubleSide }),
+)
+const callPocketMarker = new THREE.Mesh(
+  new THREE.RingGeometry(0.05, 0.058, 48),
+  new THREE.MeshBasicMaterial({ color: 0xffd54a, side: THREE.DoubleSide }),
+)
+scene.add(callBallMarker, callPocketMarker)
+
+function updateCallMarkers(): void {
+  const show = needsCall() && call !== null && call !== "safety" && mode.kind !== "replay"
+  const ball = show && call !== "safety" && call?.ball ? game.balls.get(call.ball) : undefined
+  callBallMarker.visible = !!ball
+  if (ball) callBallMarker.position.set(ball.r[0], ball.r[1], 0.002)
+  const pocketId = show && call !== null && call !== "safety" ? call.pocket : ""
+  const pocket = pocketId ? game.table.pockets.find((p) => p.id === pocketId) : undefined
+  callPocketMarker.visible = !!pocket
+  if (pocket) callPocketMarker.position.set(pocket.center[0], pocket.center[1], 0.004)
+}
 
 function updateGuide(): void {
   const c = game.balls.get(CUE)
@@ -506,13 +590,20 @@ function updateGuide(): void {
   guideLine.geometry.setFromPoints([new THREE.Vector3(c.r[0], c.r[1], z), new THREE.Vector3(gx, gy, z)])
   ghost.position.set(gx, gy, z)
   objLine.visible = hit !== null
+  let auto: Call | null = null
   if (hit) {
     const o = game.balls.get(hit)!
     const ux = o.r[0] - gx
     const uy = o.r[1] - gy
     const n = Math.hypot(ux, uy)
     objLine.geometry.setFromPoints([new THREE.Vector3(o.r[0], o.r[1], z), new THREE.Vector3(o.r[0] + (0.35 * ux) / n, o.r[1] + (0.35 * uy) / n, z)])
+    // The obvious call: the ball the guide hits, toward the pocket it heads for.
+    if (legalNow().has(hit)) {
+      const pocket = pocketToward(game.table, o.r[0], o.r[1], ux, uy)
+      if (pocket) auto = { ball: hit, pocket }
+    }
   }
+  if (needsCall() && !callManual && mode.kind === "aim") setCall(auto, false)
 }
 
 // ---------- Frame loop ----------
@@ -540,13 +631,16 @@ function frame(now: number): void {
   }
   if (game.state.pending || game.state.winner !== null) cue.visible = false
   updateGuide()
+  updateCallMarkers()
   controls.update()
   renderer.render(scene, camera)
   requestAnimationFrame(frame)
 }
 
 function shoot(V0: number): void {
-  const record = game.shoot({ V0, phi: aim.phi, theta: aim.theta, a: aim.a, b: aim.b }, { pushOut: pushOut.checked })
+  const record = game.shoot({ V0, phi: aim.phi, theta: aim.theta, a: aim.a, b: aim.b }, { pushOut: pushOut.checked, call: needsCall() ? call : null })
+  call = null
+  callManual = false
   mode = { kind: "replay", record, t: 0 }
   pushOut.checked = false
   updateHud()
