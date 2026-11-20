@@ -10,5 +10,6 @@ export {
   type ModelConfig,
 } from "./params.ts"
 export type { CueStrike } from "./resolve/stick-ball.ts"
+export { buildPocketTable, POOLTOOL_7FT, type TableSpec } from "./table-builder.ts"
 export { CushionSide, type CircularCushion, type LinearCushion, type Pocket, type Table } from "./table.ts"
 export type { Vec3 } from "./math/vec3.ts"

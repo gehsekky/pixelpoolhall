@@ -22,6 +22,7 @@ Before adding anything here, check the licensing policy in
   - `packages/physics/src/resolve/ball-ball.ts`: frictional inelastic collision, `make_kiss` placement, and the continually-touching guard. Rewritten frame-free.
   - `packages/physics/src/resolve/stronge.ts`: Stronge compliant collision. Uses our own root finder, with a corrected bracket for the slip-resume time.
   - `packages/physics/src/resolve/cushion.ts`: applying the Stronge model to rails and jaws, plus `make_kiss` placement.
+  - `packages/physics/src/table-builder.ts`: pocket-table geometry (rails, jaws, pockets) and the default 7-ft table specs.
 - pooltool has no NOTICE file. Its default parameter values appear in `packages/physics/src/params.ts`.
 
 ## Reference data

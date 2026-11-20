@@ -3,7 +3,8 @@
  * event by event.
  */
 import { simulate, type ShotResult } from "../../src/engine.ts"
-import { stateError, toCueSpecs, toModelConfig, toParams, toState, toTable } from "./fixture-convert.ts"
+import { buildPocketTable, POOLTOOL_7FT } from "../../src/table-builder.ts"
+import { stateError, toCueSpecs, toModelConfig, toParams, toState } from "./fixture-convert.ts"
 import type { FixtureFile, FixtureShot } from "./pooltool-fixtures.ts"
 
 export interface ShotComparison {
@@ -30,7 +31,8 @@ export const STATE_TOL = 1e-5
 
 export function compareShot(file: FixtureFile, shot: FixtureShot): ShotComparison {
   const ours = simulate({
-    table: toTable(file),
+    // Built from specs by our table builder (verified identical to pooltool's geometry).
+    table: buildPocketTable(POOLTOOL_7FT),
     balls: shot.balls.map((b) => ({ id: b.id, params: toParams(b.params), state: toState(b) })),
     cueBall: shot.cue.ball,
     strike: shot.cue,

@@ -105,7 +105,7 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 - ✅ Pockets: pooltool's simple "canonical" model.
 - ✅ **Exit criterion met (2026-11-19):** all 279 pooltool fixture shots reproduce the same event sequence. Outside the breaks, times agree within 1e-9 s; every shot's final positions agree within 0.52 µm. See physics-design.md, "Validation strategy".
 - ✅ **Performance, first pass.** Typical shots take 0.03–0.11 ms (9,000–36,000 shots/s, against a design goal of under 1 ms), and breaks take 1.7 ms (580/s), 11× faster than before. Results are unchanged. Remaining ideas are in physics-design.md, "Performance plan".
-- To do: **table builder** (`TableSpec` → cushions, jaws, pockets). The engine currently takes geometry exported from pooltool.
+- ✅ **Table builder** (`TableSpec` → rails, jaws, pockets). It reproduces pooltool's geometry bit for bit. Still to do: a cited WPA 9-ft preset.
 - To do: a 2D debug view showing event markers (with the `web` package).
 
 ### Phase 2: Playable game

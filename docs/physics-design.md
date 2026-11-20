@@ -23,7 +23,7 @@
 | Item | Convention |
 |---|---|
 | Units | SI throughout: meters, kilograms, seconds, radians |
-| Frame | Table frame: origin at the bottom-left corner of the playing surface, `x` along the long axis, `y` across, `z` up. The playing surface is `z = 0`, so a ball at rest has `z = R` |
+| Frame | Table frame: origin at a corner of the playing surface, `x` **across** the table (0..w), `y` **along** it (0..l), `z` up. The playing surface is `z = 0`, so a ball at rest has `z = R`. This is pooltool's frame (changed from the first draft's x-along-length on 2026-11-19), so geometry and fixtures compare directly; the renderer rotates as needed |
 | Number type | IEEE float64 only. **Never** `Math.fround`, and no rounding mid-shot |
 | Ball state | `r` (position), `v` (velocity), `ω` (angular velocity), each a 3-vector; `s` is the motion state; `t0` is the time the current segment starts |
 | Slip velocity | `u = v + R·(ẑ × ω)`, the velocity of the contact point with the cloth (horizontal part) |
@@ -203,6 +203,12 @@ The geometry builder outputs:
 - pocket definitions.
 
 This follows pooltool's layout approach, re-implemented in TypeScript with Apache-2.0 attribution if any code is ported.
+
+**As built (2026-11-19, `packages/physics/src/table-builder.ts`):**
+- `buildPocketTable(spec)` is a port of pooltool's pocket-table layout: 18 rail segments, 12 jaws and 6 pockets, with pooltool's ids.
+- From pooltool's default specs (`POOLTOOL_7FT`), it reproduces pooltool's geometry **bit for bit**.
+- The engine comparison now runs on the built table, with identical results.
+- **To do: a WPA 9-ft preset.** The 2.54 × 1.27 m playing surface is standard, but pocket mouth widths, facing angles, jaw radii and setbacks need a cited source (WPA equipment specs; measured tables) before they go in. The shelf and drop-edge parameters come with the Phase 3 pocket model.
 
 ### Pockets (Phase 3 interior model)
 

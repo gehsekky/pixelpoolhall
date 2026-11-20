@@ -1,0 +1,141 @@
+/**
+ * Builds pocket-table geometry (rails, jaws, pockets) from a TableSpec.
+ *
+ * Frame: origin at a corner of the playing surface, x across the table
+ * (0..w), y along it (0..l), z up from the slate. Rail ids follow pooltool's
+ * numbering so results can be compared with it.
+ *
+ * Portions adapted from pooltool (https://github.com/ekiefl/pooltool),
+ * Copyright Evan Kiefl, Apache License 2.0 (see LICENSES/pooltool-Apache-2.0.txt).
+ * Modified: rewritten in TypeScript; same geometry (pooltool's
+ * create_pocket_table_cushion_segments and create_pocket_table_pockets).
+ */
+import { CushionSide, type CircularCushion, type LinearCushion, type Pocket, type Table } from "./table.ts"
+
+export interface TableSpec {
+  /** Playing surface length and width, m (cushion nose to cushion nose). */
+  l: number
+  w: number
+  cushionWidth: number
+  /** Height of the cushion nose above the slate, m. */
+  cushionHeight: number
+  cushionNoseRadius: number
+  cornerPocketWidth: number
+  /** Corner pocket facing angle, degrees (beyond the 45° diagonal). */
+  cornerPocketAngle: number
+  cornerPocketDepth: number
+  cornerPocketRadius: number
+  cornerJawRadius: number
+  sidePocketWidth: number
+  /** Side pocket facing angle, degrees. */
+  sidePocketAngle: number
+  sidePocketDepth: number
+  sidePocketRadius: number
+  sideJawRadius: number
+}
+
+/** pooltool 0.6.0's default 7-ft pocket table (used by the reference fixtures). */
+export const POOLTOOL_7FT: Readonly<TableSpec> = {
+  l: 1.9812,
+  w: 1.9812 / 2,
+  cushionWidth: (2 * 2.54) / 100,
+  cushionHeight: 0.64 * 2 * 0.028575,
+  cushionNoseRadius: 0.001,
+  cornerPocketWidth: 0.118,
+  cornerPocketAngle: 5.3,
+  cornerPocketDepth: 0.0417,
+  cornerPocketRadius: 0.062,
+  cornerJawRadius: 0.02095,
+  sidePocketWidth: 0.137,
+  sidePocketAngle: 7.14,
+  sidePocketDepth: 0.0685,
+  sidePocketRadius: 0.0645,
+  sideJawRadius: 0.00795,
+}
+
+/** Pocket depth below the slate where captured balls are placed (pooltool's default). */
+const POCKET_DEPTH = 0.08
+
+export function buildPocketTable(spec: TableSpec): Table {
+  const { l, w } = spec
+  const cw = spec.cushionWidth
+  const ca = ((spec.cornerPocketAngle + 45) * Math.PI) / 180
+  const sa = (spec.sidePocketAngle * Math.PI) / 180
+  const pw = spec.cornerPocketWidth
+  const sw = spec.sidePocketWidth
+  const h = spec.cushionHeight
+  const rc = spec.cornerJawRadius
+  const rs = spec.sideJawRadius
+  // Setback of each jaw's tangent point from the pocket mouth line.
+  const dc = rc / Math.tan((Math.PI / 2 + ca) / 2)
+  const ds = rs / Math.tan((Math.PI / 2 + sa) / 2)
+  const pc = pw * Math.cos(Math.PI / 4)
+  const cos = Math.cos
+  const sin = Math.sin
+  const tan = Math.tan
+
+  const seg = (id: string, p1: [number, number], p2: [number, number], side: CushionSide): LinearCushion => ({
+    id,
+    p1: [p1[0], p1[1], h],
+    p2: [p2[0], p2[1], h],
+    noseRadius: spec.cushionNoseRadius,
+    side,
+  })
+  const { side1, side2 } = CushionSide
+  const linear: LinearCushion[] = [
+    // Long rails.
+    seg("3", [0, pc + dc], [0, (l - sw) / 2 - ds], side2),
+    seg("6", [0, (l + sw) / 2 + ds], [0, -pc + l - dc], side2),
+    seg("15", [w, pc + dc], [w, (l - sw) / 2 - ds], side1),
+    seg("12", [w, (l + sw) / 2 + ds], [w, -pc + l - dc], side1),
+    // Short rails.
+    seg("18", [pc + dc, 0], [-pc + w - dc, 0], side2),
+    seg("9", [pc + dc, l], [-pc + w - dc, l], side1),
+    // Side pocket facings.
+    seg("5", [-cw, (l + sw) / 2 - cw * sin(sa)], [-ds * cos(sa), (l + sw) / 2 - ds * sin(sa)], side1),
+    seg("4", [-cw, (l - sw) / 2 + cw * sin(sa)], [-ds * cos(sa), (l - sw) / 2 + ds * sin(sa)], side2),
+    seg("13", [w + cw, (l + sw) / 2 - cw * sin(sa)], [w + ds * cos(sa), (l + sw) / 2 - ds * sin(sa)], side1),
+    seg("14", [w + cw, (l - sw) / 2 + cw * sin(sa)], [w + ds * cos(sa), (l - sw) / 2 + ds * sin(sa)], side2),
+    // Corner pocket facings.
+    seg("1", [pc - cw * tan(ca), -cw], [pc - dc * sin(ca), -dc * cos(ca)], side2),
+    seg("2", [-cw, pc - cw * tan(ca)], [-dc * cos(ca), pc - dc * sin(ca)], side1),
+    seg("8", [pc - cw * tan(ca), cw + l], [pc - dc * sin(ca), l + dc * cos(ca)], side1),
+    seg("7", [-cw, -pc + cw * tan(ca) + l], [-dc * cos(ca), -pc + l + dc * sin(ca)], side2),
+    seg("11", [cw + w, -pc + cw * tan(ca) + l], [w + dc * cos(ca), -pc + l + dc * sin(ca)], side2),
+    seg("10", [-pc + cw * tan(ca) + w, cw + l], [-pc + w + dc * sin(ca), l + dc * cos(ca)], side1),
+    seg("16", [cw + w, +pc - cw * tan(ca)], [w + dc * cos(ca), pc - dc * sin(ca)], side1),
+    seg("17", [-pc + cw * tan(ca) + w, -cw], [-pc + w + dc * sin(ca), -dc * cos(ca)], side2),
+  ]
+
+  const jaw = (id: string, x: number, y: number, radius: number): CircularCushion => ({ id, center: [x, y, h], radius })
+  const circular: CircularCushion[] = [
+    jaw("1t", pc + dc, -rc, rc),
+    jaw("2t", -rc, pc + dc, rc),
+    jaw("4t", -rs, l / 2 - sw / 2 - ds, rs),
+    jaw("5t", -rs, l / 2 + sw / 2 + ds, rs),
+    jaw("7t", -rc, l - (pc + dc), rc),
+    jaw("8t", pc + dc, l + rc, rc),
+    jaw("10t", w - pc - dc, l + rc, rc),
+    jaw("11t", w + rc, l - (pc + dc), rc),
+    jaw("13t", w + rs, l / 2 + sw / 2 + ds, rs),
+    jaw("14t", w + rs, l / 2 - sw / 2 - ds, rs),
+    jaw("16t", w + rc, pc + dc, rc),
+    jaw("17t", w - pc - dc, -rc, rc),
+  ]
+
+  // Corner pocket centers sit diagonally outward from the rail intersection
+  // by the corner depth; side pocket centers sit outward by the side depth.
+  const cD = spec.cornerPocketDepth / Math.sqrt(2)
+  const sD = spec.sidePocketDepth
+  const pocket = (id: string, x: number, y: number, radius: number): Pocket => ({ id, center: [x, y, 0], radius, depth: POCKET_DEPTH })
+  const pockets: Pocket[] = [
+    pocket("lb", -cD, -cD, spec.cornerPocketRadius),
+    pocket("lc", -sD, l / 2, spec.sidePocketRadius),
+    pocket("lt", -cD, l + cD, spec.cornerPocketRadius),
+    pocket("rb", w + cD, -cD, spec.cornerPocketRadius),
+    pocket("rc", w + sD, l / 2, spec.sidePocketRadius),
+    pocket("rt", w + cD, l + cD, spec.cornerPocketRadius),
+  ]
+
+  return { linear, circular, pockets }
+}
