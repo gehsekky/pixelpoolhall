@@ -23,6 +23,16 @@ importers:
 
   packages/physics: {}
 
+  packages/web:
+    dependencies:
+      '@pixelpoolhall/physics':
+        specifier: workspace:*
+        version: link:../physics
+    devDependencies:
+      vite:
+        specifier: ^8.3.8
+        version: 8.3.8(@types/node@26.6.6)
+
 packages:
 
   '@emnapi/core@2.0.0-beta.2':

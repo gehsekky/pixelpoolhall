@@ -12,6 +12,8 @@ self-hosted, MIT licensed.
 | Path | What |
 |---|---|
 | `packages/physics` | Event-based physics engine. Pure TypeScript, no runtime dependencies. |
+| `packages/web` | 2D physics debug view (Vite). Later the game client. |
+| `tools/reference` | Python reference harness: NumPy and pooltool comparisons. |
 | `docs/` | Plan, design and research notes. |
 
 Infrastructure (hosting, CI deploy roles) lives in the sibling `gehsekky-infra` repo.
@@ -25,6 +27,7 @@ pnpm install
 pnpm test        # all packages
 pnpm typecheck
 pnpm lint
+pnpm --filter @pixelpoolhall/web dev   # physics debug view
 ```
 
 ## License

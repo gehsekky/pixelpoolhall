@@ -28,6 +28,7 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 | Published papers (Han 2005, Mathavan 2010/2014, Stronge, Alciatore TPs, Aberth 1973, Bini 1996) | Copyright covers the text, not the math | Implement the equations ourselves | Cite them in code and docs |
 | NumPy 2.5.5 (BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0; bundles OpenBLAS, BSD-3-Clause, and the GCC runtime under the GCC Runtime Library Exception) | Permissive (verified 2026-11-19 from the wheel metadata and license file) | Reference harness only (`tools/reference`): accuracy comparison for our solvers. Not shipped | None for shipped code |
 | pooltool's Python dependencies (numba, llvmlite, scipy, panda3d, attrs, cattrs, msgpack, h5py, Pillow, rich, …) and uv | All permissive: MIT, BSD-2/3-Clause, Apache-2.0, PSF-2.0, MIT-CMU (verified 2026-11-19 from each package's metadata) | Reference harness only. Not shipped | None for shipped code |
+| Vite 8 (MIT) and its dependencies: MIT, Apache-2.0, ISC, BSD-3-Clause, plus lightningcss (**MPL-2.0**) | Verified 2026-11-19 from each installed package.json | Dev server and bundler for `packages/web`. lightningcss only processes our CSS at build time and none of its code ships, so MPL's file-level copyleft doesn't reach our code | None for shipped code |
 | Dev tools: TypeScript (Apache-2.0), Vitest (MIT), oxlint (MIT), @types/node (MIT) | Permissive (verified 2026-11-19 from each package.json) | Build and test only; not shipped to players | None for shipped code |
 
 **Our project license: MIT** (decided 2026-11-19).
@@ -92,7 +93,7 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 ## Roadmap
 
 ### Phase 0: Foundations
-- ✅ Repo: pnpm workspace, TypeScript, Vitest, oxlint (`packages/physics`). Still to do: `game` and `web` packages, and CI.
+- ✅ Repo: pnpm workspace, TypeScript, Vitest, oxlint (`packages/physics`, `packages/web`). Still to do: `game` package and CI.
 - ✅ MIT `LICENSE` (copyright gehsekky) and `THIRD_PARTY_NOTICES.md`.
 - ✅ Our own quadratic, cubic and quartic solvers, verified against exact roots. See physics-design.md, "Root solving".
 - ✅ Compared with NumPy `roots` (LAPACK): ours is more accurate on every test family, and NumPy loses all accuracy on 43% of wide-range cases. The Python reference environment lives in `tools/reference`.
@@ -106,7 +107,7 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 - ✅ **Exit criterion met (2026-11-19):** all 279 pooltool fixture shots reproduce the same event sequence. Outside the breaks, times agree within 1e-9 s; every shot's final positions agree within 0.52 µm. See physics-design.md, "Validation strategy".
 - ✅ **Performance, first pass.** Typical shots take 0.03–0.11 ms (9,000–36,000 shots/s, against a design goal of under 1 ms), and breaks take 1.7 ms (580/s), 11× faster than before. Results are unchanged. Remaining ideas are in physics-design.md, "Performance plan".
 - ✅ **Table builder** (`TableSpec` → rails, jaws, pockets). It reproduces pooltool's geometry bit for bit. Still to do: a cited WPA 9-ft preset.
-- To do: a 2D debug view showing event markers (with the `web` package).
+- ✅ **2D debug view** (`packages/web`, `pnpm --filter @pixelpoolhall/web dev`). It replays any fixture shot through our engine and shows paths, color-coded event markers, a scrubbable timeline, editable strike parameters, and pooltool's event positions as rings. Deep links: `#category/shot@time`.
 
 ### Phase 2: Playable game
 - A Three.js table, aiming UI, and controls for spin, elevation and power.
