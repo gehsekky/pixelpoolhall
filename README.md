@@ -6,6 +6,8 @@ self-hosted, MIT licensed.
 - Plan: [docs/billiards-game-plan.md](docs/billiards-game-plan.md)
 - Physics design: [docs/physics-design.md](docs/physics-design.md)
 - Rules implementation: [docs/rules.md](docs/rules.md)
+- Computer opponent: [docs/ai.md](docs/ai.md)
+- Multiplayer architecture (Phase 4 sketch): [docs/multiplayer-design.md](docs/multiplayer-design.md)
 - Prior-art analyses: [tailuge](docs/tailuge-analysis.md), [pooltool](docs/pooltool-analysis.md)
 
 ## Layout
