@@ -16,10 +16,11 @@ Before adding anything here, check the licensing policy in
 - Source: https://github.com/ekiefl/pooltool (commit 9e819eb), Copyright Evan Kiefl.
 - License: Apache License 2.0. Full text: `LICENSES/pooltool-Apache-2.0.txt`.
 - **Adapted files.** Each carries a header naming pooltool, its license, and how it was modified. All are rewritten in TypeScript; none is a line-for-line copy.
-  - `packages/physics/src/detect.ts`: contact-time equations and acceptance rules from pooltool's 2D detectors.
+  - `packages/physics/src/detect.ts`: contact-time equations and acceptance rules from pooltool's 2D and 3D detectors (3D ball–ball and rail contact, landing, leaving the table, airborne pocket capture).
   - `packages/physics/src/engine.ts`: event caching, invalidation and tie-breaking. Restructured around per-ball trajectory segments.
   - `packages/physics/src/resolve/stick-ball.ts`: cue strike and squirt (model from Alciatore TP A-30/A-31).
-  - `packages/physics/src/resolve/ball-ball.ts`: frictional inelastic collision, `make_kiss` placement, and the continually-touching guard. Rewritten frame-free.
+  - `packages/physics/src/resolve/ball-ball.ts`: frictional inelastic collision, `make_kiss` placement (including the 3D table constraint), and the continually-touching guard. Rewritten frame-free.
+  - `packages/physics/src/resolve/ball-table.ts`: frictional inelastic ball–table landing (Alciatore TP A-14) and the off-table freeze.
   - `packages/physics/src/resolve/stronge.ts`: Stronge compliant collision. Uses our own root finder, with a corrected bracket for the slip-resume time.
   - `packages/physics/src/resolve/cushion.ts`: applying the Stronge model to rails and jaws, plus `make_kiss` placement.
   - `packages/physics/src/table-builder.ts`: pocket-table geometry (rails, jaws, pockets) and the default 7-ft table specs.
@@ -27,7 +28,7 @@ Before adding anything here, check the licensing policy in
 
 ## Reference data
 
-- `packages/physics/test/fixtures/pooltool/*.json`: simulation output generated
+- `packages/physics/test/fixtures/pooltool/*.json` and `pooltool3d/*.json`: simulation output generated
   by running pooltool (https://github.com/ekiefl/pooltool, Apache-2.0, Copyright
   Evan Kiefl) through `tools/reference/pooltool_fixtures.py`. Test data only. It
   contains no pooltool code and is not shipped.

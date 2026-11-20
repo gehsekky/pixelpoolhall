@@ -40,6 +40,12 @@ export interface Table {
   linear: LinearCushion[]
   circular: CircularCushion[]
   pockets: Pocket[]
+  /**
+   * Playing surface, nose to nose ([0, w] × [0, l]). In 3D, an airborne ball
+   * whose center crosses its edge (outside a pocket) leaves the table.
+   * Without it, balls never leave the table.
+   */
+  size?: { w: number; l: number }
 }
 
 export const cushionHeight = (c: LinearCushion): number => c.p1[2]

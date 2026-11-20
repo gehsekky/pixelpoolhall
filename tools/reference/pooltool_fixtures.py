@@ -1,9 +1,10 @@
 """Export pooltool simulations as JSON fixtures for our engine's tests.
 
-    tools/reference/.venv/bin/python -I tools/reference/pooltool_fixtures.py [out_dir]
+    tools/reference/.venv/bin/python -I tools/reference/pooltool_fixtures.py [--3d] [out_dir]
 
 Writes one file per shot category to packages/physics/test/fixtures/pooltool/
-(or out_dir). Each file holds everything needed to replay the shots without
+(or, with --3d, pooltool's 3D engine to fixtures/pooltool3d/; or out_dir).
+The 3D export runs every 2D category plus "jump" (airborne balls). Each file holds everything needed to replay the shots without
 pooltool: the physics models and their parameters, the table geometry as
 pooltool builds it, each ball's parameters and starting state, the cue strike,
 and every event with the post-event state of each ball involved.
@@ -43,18 +44,24 @@ from pooltool.evolution.engine import SimulationEngine
 from pooltool.objects.ball.datatypes import Ball
 from pooltool.objects.table.collection import default_specs_from_table_type
 from pooltool.objects.table.specs import TableType
-from pooltool.physics.resolve.resolver import default_resolver
+from pooltool.physics.resolve.resolver import default_resolver, default_resolver_3d
 from pooltool.serialize import SerializeFormat, conversion
 
 SCHEMA = 1
 POOLTOOL_COMMIT = "9e819eb13995b8764226d6da98069b7fd6e14302"
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = REPO / "packages/physics/test/fixtures/pooltool"
+DEFAULT_OUT_3D = REPO / "packages/physics/test/fixtures/pooltool3d"
 MAX_EVENTS = 2000
+IS_3D = "--3d" in sys.argv[1:]
+
+
+def make_resolver():
+    return default_resolver_3d() if IS_3D else default_resolver()
 
 
 def engine() -> SimulationEngine:
-    return SimulationEngine(is_3d=False, resolver=default_resolver())
+    return SimulationEngine(is_3d=IS_3D, resolver=make_resolver())
 
 
 def to_plain(obj: object) -> object:
@@ -234,6 +241,27 @@ def random_shots() -> Iterator[Shot]:
                                rng.uniform(-0.5, 0.5), rng.uniform(-0.5, 0.5)))
 
 
+def jump_shots() -> Iterator[Shot]:
+    # Elevated cue driving the ball into the slate: it bounces and flies.
+    for theta in (20.0, 35.0, 50.0, 60.0):
+        for V0 in (1.5, 3.0, 5.0):
+            for spin in ("center", "follow", "draw", "left"):
+                a, b = SPINS[spin]
+                yield Shot(f"jump-{theta}-V{V0}-{spin}", f"jump stroke, {theta} deg, {V0} m/s, {spin}",
+                           {"cue": (W / 2, L / 4)}, Strike(V0, 90.0, theta, a, b))
+    # Jumping over (or into) a blocker ball, at several distances.
+    for gap in (0.08, 0.15, 0.3):
+        for theta, V0 in ((30.0, 3.0), (45.0, 4.0), (55.0, 5.0)):
+            yield Shot(f"over-{gap}-{theta}-V{V0}", f"jump at a blocker {gap} m away, {theta} deg, {V0} m/s",
+                       {"cue": (W / 2, L / 4), "1": (W / 2, L / 4 + gap + 2 * R), "2": (W / 2, L / 2 + 0.3)},
+                       Strike(V0, 90.0, theta, 0.0, 0.0))
+    # Hard jumps at a rail: hops, and balls leaving the table.
+    for incidence in (90.0, 45.0):
+        for theta, V0 in ((25.0, 4.0), (40.0, 6.0), (55.0, 8.0)):
+            yield Shot(f"rail-{incidence}-{theta}-V{V0}", f"jump into the right rail at {incidence} deg, {theta} deg, {V0} m/s",
+                       {"cue": (W - 0.25, L / 2)}, Strike(V0, 90.0 - incidence, theta, 0.0, 0.0))
+
+
 CATEGORIES: dict[str, tuple[str, Callable[[], Iterator[Shot]]]] = {
     "motion": ("Lone cue ball: motion states and transitions, including masse", motion_shots),
     "cushion": ("Cue ball into a straight rail at many angles, speeds and spins", cushion_shots),
@@ -243,6 +271,10 @@ CATEGORIES: dict[str, tuple[str, Callable[[], Iterator[Shot]]]] = {
     "frozen": ("Balls frozen to a rail or to each other", frozen_shots),
     "break": ("9-ball and 8-ball breaks", break_shots),
     "random": ("Seeded random layouts of 2-6 balls with random strikes", random_shots),
+}
+CATEGORIES_3D = {
+    **CATEGORIES,
+    "jump": ("Airborne balls: jump strokes, jumps at a blocker, hard jumps at a rail", jump_shots),
 }
 
 # ---------------------------------------------------------------- export
@@ -325,18 +357,32 @@ def main() -> None:
         # isolation of -I, which would ignore PYTHONHASHSEED (-E).
         os.execve(sys.executable, [sys.executable, "-P", "-s", __file__, *sys.argv[1:]],
                   {**os.environ, "PYTHONHASHSEED": "0"})
-    out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_OUT
+    args = [a for a in sys.argv[1:] if a != "--3d"]
+    out_dir = Path(args[0]) if args else (DEFAULT_OUT_3D if IS_3D else DEFAULT_OUT)
     out_dir.mkdir(parents=True, exist_ok=True)
     header = {
         "schema": SCHEMA,
         "generator": {"pooltool": version("pooltool-billiards"), "commit": POOLTOOL_COMMIT,
                       "numpy": np.__version__},
     }
-    shared = {"engine": {"is_3d": False, "resolver": to_plain(default_resolver())},
+    shared = {"engine": {"is_3d": IS_3D, "resolver": to_plain(make_resolver())},
               "table": table_geometry()}
-    for category, (description, shots) in CATEGORIES.items():
+    for category, (description, shots) in (CATEGORIES_3D if IS_3D else CATEGORIES).items():
+        exported, failed = [], []
+        for shot in shots():
+            try:
+                exported.append(export_shot(shot))
+            except Exception as err:  # noqa: BLE001 - pooltool itself failed on this shot
+                if not IS_3D:
+                    raise
+                failed.append({"name": shot.name, "error": f"{type(err).__name__}: {err}"})
         data = {**header, "category": category, "description": description, **shared,
-                "shots": [export_shot(s) for s in shots()]}
+                "shots": exported}
+        if failed:
+            # pooltool's 3D mode can't simulate these; recorded so the gap is visible.
+            data["pooltool_failures"] = failed
+            for f in failed:
+                print(f"  pooltool failed on {category}/{f['name']}: {f['error']}")
         path = out_dir / f"{category}.json"
         path.write_text(json.dumps(data, allow_nan=False, separators=(",", ":")) + "\n")
         n_events = sum(len(s["events"]) for s in data["shots"])

@@ -70,10 +70,15 @@ export interface ModelConfig {
     englishThrottle: number
     squirtThrottle: number
   }
+  ballTable: {
+    /** Landings that would bounce lower than this (m, bottom of the ball) don't bounce. */
+    minBounceHeight: number
+  }
 }
 
 export const DEFAULT_MODEL_CONFIG: Readonly<ModelConfig> = {
   ballBall: { friction: { a: 0.009951, b: 0.108, c: 1.088 } },
   cushion: { omegaRatio: 1.8 },
   stickBall: { englishThrottle: 1, squirtThrottle: 1 },
+  ballTable: { minBounceHeight: 0.005 },
 }

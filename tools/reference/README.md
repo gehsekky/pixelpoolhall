@@ -39,7 +39,8 @@ DEGREE=3 node test/numpy-comparison.ts 300   # cubic
 ## pooltool fixtures
 
 ```sh
-tools/reference/.venv/bin/python -I tools/reference/pooltool_fixtures.py
+tools/reference/.venv/bin/python -I tools/reference/pooltool_fixtures.py        # 2D, fixtures/pooltool/
+tools/reference/.venv/bin/python -I tools/reference/pooltool_fixtures.py --3d   # 3D, fixtures/pooltool3d/
 ```
 
 This writes one JSON file per shot category to

@@ -9,7 +9,9 @@ Event-based billiards physics engine. See
 |---|---|
 | Polynomial root solvers (quadratic, cubic, quartic) | Done, verified against exact roots |
 | 2D engine: motion, detection, cue strike, ball–ball, rails, jaws, pockets | Done, matches all 279 pooltool fixture shots (see `test/engine.test.ts`) |
-| Performance work, table builder, 3D (airborne), pocket interior | Not started |
+| Performance work (first pass), table builder (pooltool 7-ft, WPA 9-ft) | Done |
+| 3D engine (`dim: "3d"`): jump shots, hops, collisions in the air, balls leaving the table | Done, matches all 340 pooltool 3D fixture shots (see `test/engine3d.test.ts`) |
+| Pocket interior, fitting to measured data, Mathavan models | Not started |
 
 ```ts
 import { simulate } from "@pixelpoolhall/physics"

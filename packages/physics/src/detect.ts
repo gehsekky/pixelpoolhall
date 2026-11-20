@@ -140,6 +140,162 @@ function circleTime(b: BallState, p: BallParams, a: number, bb: number, dist: nu
 export const circularCushionTime = (b: BallState, p: BallParams, c: CircularCushion): number =>
   circleTime(b, p, c.center[0], c.center[1], c.radius + p.R)
 
-/** Pocket capture: center enters the pocket circle. */
+/** Pocket capture: center enters the pocket circle (airborne balls: see airbornePocketTime). */
 export const pocketTime = (b: BallState, p: BallParams, pocket: Pocket): number =>
-  circleTime(b, p, pocket.center[0], pocket.center[1], pocket.radius)
+  b.s === MotionState.airborne ? airbornePocketTime(b, p, pocket) : circleTime(b, p, pocket.center[0], pocket.center[1], pocket.radius)
+
+// ---------------------------------------------------------------- 3D
+//
+// pooltool 0.6's 3D detectors (`is_3d=True`): full 3D parabolas, so airborne
+// balls collide with balls and rails in the air; plus landing (ball–table),
+// leaving the table, and capture of airborne balls by pockets.
+
+/** Ball–ball contact in 3D: |r1(τ) − r2(τ)| = R1 + R2 with balls approaching (τ ≥ 0). */
+export function ballBallTime3D(b1: BallState, p1: BallParams, b2: BallState, p2: BallParams): number {
+  if (isOutOfPlay(b1.s) || isOutOfPlay(b2.s)) return Infinity
+  if (isNontranslating(b1.s) && isNontranslating(b2.s)) return Infinity
+  const h1 = halfAcceleration(b1, p1)
+  const h2 = halfAcceleration(b2, p2)
+  // Relative position of ball 1 from ball 2, per axis: c + b τ + a τ².
+  const a = [h1[0] - h2[0], h1[1] - h2[1], h1[2] - h2[2]]
+  const b = [b1.v[0] - b2.v[0], b1.v[1] - b2.v[1], b1.v[2] - b2.v[2]]
+  const c = [b1.r[0] - b2.r[0], b1.r[1] - b2.r[1], b1.r[2] - b2.r[2]]
+  const d = p1.R + p2.R
+  const dot = (x: number[], y: number[]) => x[0]! * y[0]! + x[1]! * y[1]! + x[2]! * y[2]!
+  const rs = solveContactQuartic(
+    dot(a, a) / 2,
+    dot(a, b),
+    dot(a, c) + dot(b, b) / 2,
+    dot(b, c),
+    (dot(c, c) - d * d) / 2,
+  )
+  let best = Infinity
+  for (let i = 0; i < rs.count; i++) {
+    const t = rs.re[i]!
+    if (!(t >= 0 && t < best) || !isRealRoot(t, rs.im[i]!)) continue
+    let closing = 0
+    for (let k = 0; k < 3; k++) closing += (c[k]! + b[k]! * t + a[k]! * t * t) * (b[k]! + 2 * a[k]! * t)
+    if (closing >= 0) continue
+    best = t
+  }
+  return best
+}
+
+/**
+ * Straight rail in 3D: the ball center reaches distance R + nose radius from
+ * the nose axis. In the plane perpendicular to the axis (horizontal X across
+ * the rail, vertical Y) that's a parabola meeting a circle, a quartic. The
+ * contact must fall strictly inside the segment, with the ball approaching.
+ */
+export function linearCushionTime3D(b: BallState, p: BallParams, c: LinearCushion): number {
+  if (isNontranslating(b.s)) return Infinity
+  const h = halfAcceleration(b, p)
+  const ax = c.p2[0] - c.p1[0]
+  const ay = c.p2[1] - c.p1[1]
+  const len = Math.hypot(ax, ay)
+  const ux = ax / len
+  const uy = ay / len
+  // Basis: e1 = (uy, -ux, 0) across the rail, e2 = z.
+  const qx = b.r[0] - c.p1[0]
+  const qy = b.r[1] - c.p1[1]
+  const X = [qx * uy - qy * ux, b.v[0] * uy - b.v[1] * ux, h[0] * uy - h[1] * ux]
+  const Y = [b.r[2] - c.p1[2], b.v[2], h[2]]
+  const A = [qx * ux + qy * uy, b.v[0] * ux + b.v[1] * uy, h[0] * ux + h[1] * uy]
+  const rad = c.noseRadius + p.R
+  const rs = solveContactQuartic(
+    (X[2]! * X[2]! + Y[2]! * Y[2]!) / 2,
+    X[2]! * X[1]! + Y[2]! * Y[1]!,
+    X[2]! * X[0]! + Y[2]! * Y[0]! + (X[1]! * X[1]! + Y[1]! * Y[1]!) / 2,
+    X[1]! * X[0]! + Y[1]! * Y[0]!,
+    (X[0]! * X[0]! + Y[0]! * Y[0]! - rad * rad) / 2,
+  )
+  let best = Infinity
+  for (let i = 0; i < rs.count; i++) {
+    const t = rs.re[i]!
+    if (t <= 0 || t >= best || !isRealRoot(t, rs.im[i]!)) continue
+    const along = A[0]! + A[1]! * t + A[2]! * t * t
+    if (!(along > 0 && along < len)) continue
+    const x = X[0]! + X[1]! * t + X[2]! * t * t
+    const y = Y[0]! + Y[1]! * t + Y[2]! * t * t
+    if (x * (X[1]! + 2 * X[2]! * t) + y * (Y[1]! + 2 * Y[2]! * t) > 0) continue
+    best = t
+  }
+  return best
+}
+
+/** Time until an airborne ball comes down to the table (z = R): the later root of z(τ) = R. */
+export function landingTime(b: BallState, p: BallParams): number {
+  if (b.s !== MotionState.airborne) return Infinity
+  if (p.g === 0) return Infinity
+  solveQuadratic(-0.5 * p.g, b.v[2], b.r[2] - p.R, roots)
+  let t = -Infinity
+  for (let i = 0; i < roots.count; i++) t = Math.max(t, roots.re[i]!)
+  return t
+}
+
+/**
+ * Time until an airborne ball leaves the table: its center crosses the edge
+ * of the playing surface, or, if its flight carries it into a pocket's
+ * circle first, the far side of that circle (pooltool's ball_off_table_time).
+ */
+export function offTableTime(b: BallState, p: BallParams, size: { w: number; l: number }, pockets: readonly Pocket[]): number {
+  if (b.s !== MotionState.airborne) return Infinity
+  const [x, y] = b.r
+  const [vx, vy] = b.v
+  let tEdge = Infinity
+  if (vx < 0) tEdge = Math.min(tEdge, (0 - x) / vx)
+  else if (vx > 0) tEdge = Math.min(tEdge, (size.w - x) / vx)
+  if (vy < 0) tEdge = Math.min(tEdge, (0 - y) / vy)
+  else if (vy > 0) tEdge = Math.min(tEdge, (size.l - y) / vy)
+  if (tEdge === Infinity) return Infinity
+  tEdge = Math.max(tEdge, 0)
+  const tLand = landingTime(b, p)
+  const A = vx * vx + vy * vy
+  let tOff = tEdge
+  for (const pk of pockets) {
+    const px = x - pk.center[0]
+    const py = y - pk.center[1]
+    const B = 2 * (px * vx + py * vy)
+    const C = px * px + py * py - pk.radius * pk.radius
+    const disc = B * B - 4 * A * C
+    if (disc <= 0) continue
+    const root = Math.sqrt(disc)
+    const tIn = (-B - root) / (2 * A)
+    const tOut = (-B + root) / (2 * A)
+    if (tOut <= tEdge || tIn > tLand) continue
+    tOff = Math.max(tOff, tOut)
+  }
+  return tOff
+}
+
+/**
+ * Pocket capture of an airborne ball (pooltool's
+ * ball_pocket_collision_time_if_airborne): captured if it lands inside the
+ * pocket circle (just before landing), or if it crosses the circle without
+ * dipping below the table plane on the way in and leaves it below (7/5)R.
+ */
+export function airbornePocketTime(b: BallState, p: BallParams, pocket: Pocket): number {
+  const a = pocket.center[0]
+  const bb = pocket.center[1]
+  const r = pocket.radius
+  const vx = b.v[0]
+  const vy = b.v[1]
+  const tLand = landingTime(b, p)
+  const x = b.r[0] + vx * tLand
+  const y = b.r[1] + vy * tLand
+  if ((x - a) ** 2 + (y - bb) ** 2 < r * r) return Math.max(tLand - EPS, 0)
+  const cx = b.r[0]
+  const cy = b.r[1]
+  solveQuadratic(0.5 * (vx * vx + vy * vy), vx * (cx - a) + vy * (cy - bb), 0.5 * (a * a + bb * bb + cx * cx + cy * cy - r * r) - (cx * a + cy * bb), roots)
+  if (roots.count < 2 || Math.abs(roots.im[0]!) > 1e-9 || Math.abs(roots.im[1]!) > 1e-9) return Infinity
+  const r1 = Math.min(roots.re[0]!, roots.re[1]!)
+  const r2 = Math.max(roots.re[0]!, roots.re[1]!)
+  if (r1 < 0) return Infinity
+  const z0 = b.r[2]
+  const v0z = b.v[2]
+  const h0 = -0.5 * p.g * r1 * r1 + v0z * r1 + z0
+  const hf = -0.5 * p.g * r2 * r2 + v0z * r2 + z0
+  if (h0 < p.R) return Infinity
+  if (hf > (7 / 5) * p.R) return Infinity
+  return (r1 + r2) / 2
+}

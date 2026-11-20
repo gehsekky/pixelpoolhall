@@ -135,7 +135,7 @@ Because the game is free and self-hosted, the licenses of the things we use set 
   - ✅ Banks, combinations (always the 9 at 9-ball), kicks out of snookers, and 9-ball push outs. Their aim is solved in the simulation by root-finding a signed miss. The computer announces each shot in the HUD.
 
 ### Phase 3: Accuracy beyond the references
-- **3D:** airborne balls, jump shots, landings, balls hopping the rail.
+- ✅ **3D:** airborne balls, jump shots, landings, balls hopping the rail and leaving the table (`dim: "3d"`, the game's default). It matches pooltool's 3D engine on all 340 fixture shots: the same events, times within 2.1e-9 s, final positions within 1.9 nm. See physics-design.md, "3D mode".
 - **Pocket interior:** shelf, drop edge, back facing, rattle.
 - **Accuracy options:** Mathavan 2014 ball–ball model as a selectable high-accuracy mode.
 - **Fitting to real data:** collect measured shot data (high-speed video, Alciatore's data) and fit our parameters to it.

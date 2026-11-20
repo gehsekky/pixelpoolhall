@@ -218,6 +218,38 @@ This follows pooltool's layout approach, re-implemented in TypeScript with Apach
 
   The WPA doesn't specify the jaw rounding, nose radius or pocket capture circles. Those keep pooltool's values until the Phase 3 pocket model, which also brings the shelf (corner 1–2¼ in, side 0–⅜ in) and the 12–15° back draft.
 
+### 3D mode (Phase 3, as built 2026-11-20)
+
+`simulate({ ..., dim: "3d" })` lets balls leave the slate. It follows pooltool's `is_3d` engine at the pinned commit:
+
+- **Cue strike:** the elevated cue's downward velocity is kept (vz = −v·sin θ). The ball is airborne at t = 0 and lands at once: a jump.
+- **Airborne motion:** a parabola under gravity, with ω constant. No transitions; the segment ends at landing.
+- **Detection:**
+  - ball–ball as a full 3D quartic;
+  - rails as the nose cylinder: in the plane perpendicular to the rail axis, a parabola meeting a circle;
+  - landing, the later root of z(τ) = R;
+  - leaving the table: the center crosses the edge of the playing surface, or the far side of a pocket circle the ball flies through;
+  - airborne pocket capture: the ball lands in the circle, or crosses it without dipping below the slate and leaves it below 7/5 R.
+  - As in pooltool, jaws don't see airborne balls.
+- **Resolution:**
+  - the 2D models keep their vertical velocity;
+  - landing is a frictional inelastic impulse (Alciatore TP A-14, `e_t`, `μs`), and bounces under 5 mm are killed;
+  - a ball that leaves the table freezes where it crossed.
+  - Ball–ball contact placement keeps balls on or above the slate by sliding them around the contact sphere (pooltool's `_constrain_to_table`).
+- **Event ties:** leaving the table ranks after pockets (tier 3), and landing with the collisions (tier 4).
+- **Not closing at contact.** pooltool's jaw normal tilts (it's taken from a point at cushion height), while jaws are detected in the plane. So in 3D a hopping ball can reach a jaw approaching in the plane yet separating along the normal, and pooltool raises an assertion error. It does so on 1 of the 342 3D fixture shots, on a rail. We resolve those contacts with the horizontal normal (jaws) or no impulse (rails). Every fixture pooltool completes is unaffected.
+
+**Results** (`test/engine3d.test.ts`):
+- **Coverage:** every 2D category re-run in 3D, plus jump shots, jumps at a blocker, and hard jumps at a rail: 340 shots, 7,068 events, with 2,173 landings, 38 balls leaving the table, and collisions in the air.
+- **Sequence:** the same event sequence as pooltool for every shot.
+- **Times:** within 2.1e-9 s, with states within 3e-8.
+- **Final positions:** within 1.9 nm, including breaks.
+- **Invariants:** mechanical energy, kinetic plus potential, never increases; no ball ends up below the slate; every ball ends at rest, pocketed or off the table.
+- **pooltool's own 3D failures:** it couldn't complete 2 of the 342 shots, both recorded in the fixtures. One is the assertion above; the other is a frozen combination that chatters past 2,000 events.
+- **Speed:** 0.05–0.17 ms for typical shots and 3.7 ms for a break, about 1.5–2× the 2D cost. Hops add events.
+
+The game plays in 3D by default (`GameOptions.dim`).
+
 ### Pockets (Phase 3 interior model)
 
 The pocket is modeled as real geometry:

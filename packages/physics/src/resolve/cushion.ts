@@ -83,12 +83,21 @@ export function makeKissCircular(b: BallState, c: CircularCushion, R: number): V
   return addScaled(b.r, b.v, t)
 }
 
-/** Apply Stronge's model at a contact with outward unit normal n (from cushion to ball). */
+/** Normal speed of the contact point along n (negative = closing). */
+const closingSpeed = (b: BallState, n: Vec3, p: BallParams) => dot(n, surfaceVelocity(b.v, b.w, scale(n, -1), p.R))
+
+/**
+ * Apply Stronge's model at a contact with outward unit normal n (from cushion
+ * to ball). A contact that isn't closing along n gets no impulse: the ball is
+ * already leaving. (pooltool raises an assertion error there; it only arises
+ * in 3D, see resolveCircularCushion.)
+ */
 function strongeImpulse(b: BallState, n: Vec3, p: BallParams, omegaRatio: number): { v: Vec3; w: Vec3 } {
   const beta_t = 3.5
   const beta_n = 1
   const vc = surfaceVelocity(b.v, b.w, scale(n, -1), p.R)
   const vn0 = dot(n, vc)
+  if (!(vn0 < 0)) return { v: [...b.v], w: [...b.w] }
   const nxv = cross(n, vc)
   const vt0 = -norm(nxv) // tangent direction chosen so v_t0 <= 0
   const t: Vec3 = vt0 !== 0 ? scale(cross(nxv, n), 1 / vt0) : [0, 0, 0]
@@ -100,19 +109,26 @@ function strongeImpulse(b: BallState, n: Vec3, p: BallParams, omegaRatio: number
   return { v, w }
 }
 
-function finish(r: Vec3, v: Vec3, w: Vec3, p: BallParams): BallState {
-  v[2] = 0
+function finish(r: Vec3, v: Vec3, w: Vec3, p: BallParams, threeD: boolean): BallState {
+  if (!threeD) v[2] = 0
   return { r, v, w, s: classify(r, v, w, p) }
 }
 
-export function resolveLinearCushion(b: BallState, c: LinearCushion, p: BallParams, config: ModelConfig["cushion"]): BallState {
+export function resolveLinearCushion(b: BallState, c: LinearCushion, p: BallParams, config: ModelConfig["cushion"], threeD = false): BallState {
   const r = makeKissLinear(b, c, p.R)
   const { v, w } = strongeImpulse({ ...b, r }, linearNormal(c, r), p, config.omegaRatio)
-  return finish(r, v, w, p)
+  return finish(r, v, w, p, threeD)
 }
 
-export function resolveCircularCushion(b: BallState, c: CircularCushion, p: BallParams, config: ModelConfig["cushion"]): BallState {
+export function resolveCircularCushion(b: BallState, c: CircularCushion, p: BallParams, config: ModelConfig["cushion"], threeD = false): BallState {
   const r = makeKissCircular(b, c, p.R)
-  const { v, w } = strongeImpulse({ ...b, r }, circularNormal(c, r), p, config.omegaRatio)
-  return finish(r, v, w, p)
+  let n = circularNormal(c, r)
+  // pooltool's jaw normal points from a point at cushion height, so it tilts
+  // vertically, while jaw contact is detected in the table plane. In 3D a
+  // hopping ball can be approaching in the plane yet separating along the
+  // tilted normal (pooltool asserts there). Then use the horizontal normal of
+  // the vertical cylinder the detector used, which is closing.
+  if (!(closingSpeed({ ...b, r }, n, p) < 0)) n = unit([r[0] - c.center[0], r[1] - c.center[1], 0])
+  const { v, w } = strongeImpulse({ ...b, r }, n, p, config.omegaRatio)
+  return finish(r, v, w, p, threeD)
 }

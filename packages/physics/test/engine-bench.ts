@@ -3,6 +3,7 @@
  *
  *   node test/engine-bench.ts            all categories
  *   CATEGORY=break node test/engine-bench.ts
+ *   DIM=3d node test/engine-bench.ts     the 3D fixtures, in 3D
  */
 import { simulate, type Shot } from "../src/engine.ts"
 import { toCueSpecs, toModelConfig, toParams, toState, toTable } from "./support/fixture-convert.ts"
@@ -10,7 +11,8 @@ import { loadFixtures } from "./support/pooltool-fixtures.ts"
 
 const budgetMs = Number(process.env.BUDGET_MS ?? 1500)
 console.log(["category", "ms/shot", "events/shot", "shots/s", "events/s"].join("\t"))
-for (const f of loadFixtures().filter((f) => !process.env.CATEGORY || f.category === process.env.CATEGORY)) {
+const threeD = process.env.DIM === "3d"
+for (const f of loadFixtures(threeD).filter((f) => !process.env.CATEGORY || f.category === process.env.CATEGORY)) {
   const shots: Shot[] = f.shots.map((s) => ({
     table: toTable(f),
     balls: s.balls.map((b) => ({ id: b.id, params: toParams(b.params), state: toState(b) })),
@@ -18,6 +20,7 @@ for (const f of loadFixtures().filter((f) => !process.env.CATEGORY || f.category
     strike: s.cue,
     cueSpecs: toCueSpecs(s.cue.specs),
     config: toModelConfig(f),
+    dim: threeD ? "3d" : "2d",
   }))
   for (let i = 0; i < 3; i++) for (const s of shots) simulate(s) // warm up the JIT
   let runs = 0

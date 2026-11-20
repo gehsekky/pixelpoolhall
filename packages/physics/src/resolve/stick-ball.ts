@@ -42,7 +42,8 @@ export function squirtAngle(ballMass: number, endMass: number, a: number, thrott
 }
 
 /**
- * The ball's state just after the strike (2D: vertical velocity is dropped).
+ * The ball's state just after the strike. In 2D the vertical velocity is
+ * dropped; in 3D an elevated cue drives the ball into the slate (vz < 0).
  */
 export function resolveStickBall(
   ball: BallState,
@@ -50,6 +51,7 @@ export function resolveStickBall(
   cue: CueStrike,
   specs: CueSpecs,
   config: ModelConfig["stickBall"],
+  threeD = false,
 ): BallState {
   const phi = (cue.phi * Math.PI) / 180
   const theta = (cue.theta * Math.PI) / 180
@@ -72,7 +74,7 @@ export function resolveStickBall(
   let v = rotateZ(vBall, phi + Math.PI / 2)
   const w = rotateZ(wBall, phi + Math.PI / 2).map((x) => x * config.englishThrottle) as Vec3
   v = rotateZ(v, squirtAngle(p.m, specs.end_mass, cue.a, config.squirtThrottle))
-  v[2] = 0
+  if (!threeD) v[2] = 0
   const r: Vec3 = [ball.r[0], ball.r[1], ball.r[2]]
   return { r, v, w, s: classify(r, v, w, p) }
 }

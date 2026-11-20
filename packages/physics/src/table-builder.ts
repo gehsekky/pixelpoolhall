@@ -173,5 +173,5 @@ export function buildPocketTable(spec: TableSpec): Table {
     pocket("rt", w + cD, l + cD, spec.cornerPocketRadius),
   ]
 
-  return { linear, circular, pockets }
+  return { linear, circular, pockets, size: { w, l } }
 }

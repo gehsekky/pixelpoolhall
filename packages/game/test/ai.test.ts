@@ -79,7 +79,8 @@ describe("computer opponent", () => {
   const noiseless = { ...AI_LEVELS.hard, finalists: 0 }
 
   it("banks: a solved bank pockets the ball after a rail", () => {
-    const g = setUp("9-ball", { cue: [0.635, 0.7], "1": [0.4, 1.27], "9": [1.0, 2.3] })
+    // The 1 straight up the table: banks off the foot rail back into the head corners.
+    const g = setUp("9-ball", { cue: [0.63, 1.5], "1": [0.63, 2.2], "9": [1.1, 0.4] })
     const banks = bankCandidates(g, 0, noiseless, g.balls)
     expect(banks.length).toBeGreaterThan(0)
     const made = banks.filter((c) => {

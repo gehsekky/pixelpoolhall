@@ -16,6 +16,7 @@ export function toTable(f: FixtureFile): Table {
     linear: f.table.linear.map((c) => ({ id: c.id, p1: [...c.p1], p2: [...c.p2], noseRadius: c.nose_radius, side: c.direction as CushionSide })),
     circular: f.table.circular.map((c) => ({ id: c.id, center: [...c.center], radius: c.radius })),
     pockets: f.table.pockets.map((p) => ({ id: p.id, center: [...p.center], radius: p.radius, depth: p.depth })),
+    size: { w: (f.table.specs as Record<string, number>).w!, l: (f.table.specs as Record<string, number>).l! },
   }
 }
 
@@ -29,6 +30,7 @@ export function toModelConfig(f: FixtureFile): ModelConfig {
       englishThrottle: r.stick_ball!.english_throttle as number,
       squirtThrottle: r.stick_ball!.squirt_throttle as number,
     },
+    ballTable: { minBounceHeight: (r.ball_table?.min_bounce_height as number | undefined) ?? 0.005 },
   }
 }
 

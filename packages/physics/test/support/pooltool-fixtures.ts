@@ -8,6 +8,7 @@ import { readdirSync, readFileSync } from "node:fs"
 
 export const FIXTURE_SCHEMA = 1
 const DIR = new URL("../fixtures/pooltool/", import.meta.url)
+const DIR_3D = new URL("../fixtures/pooltool3d/", import.meta.url)
 
 export type Vec3 = [number, number, number]
 /** [position, velocity, angular velocity]. */
@@ -96,9 +97,11 @@ export interface FixtureFile {
   shots: FixtureShot[]
 }
 
-export function loadFixtures(): FixtureFile[] {
-  return readdirSync(DIR)
+/** The 2D fixtures, or with `threeD` the ones from pooltool's 3D engine. */
+export function loadFixtures(threeD = false): FixtureFile[] {
+  const dir = threeD ? DIR_3D : DIR
+  return readdirSync(dir)
     .filter((f) => f.endsWith(".json"))
     .sort()
-    .map((f) => JSON.parse(readFileSync(new URL(f, DIR), "utf8")) as FixtureFile)
+    .map((f) => JSON.parse(readFileSync(new URL(f, dir), "utf8")) as FixtureFile)
 }

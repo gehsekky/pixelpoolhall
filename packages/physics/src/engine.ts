@@ -18,7 +18,18 @@
  * Copyright Evan Kiefl, Apache License 2.0 (see LICENSES/pooltool-Apache-2.0.txt).
  * Modified: rewritten in TypeScript with per-ball trajectory segments.
  */
-import { ballBallTime, ballsOverlap, circularCushionTime, contactDistance, linearCushionTime, pocketTime } from "./detect.ts"
+import {
+  ballBallTime,
+  ballBallTime3D,
+  ballsOverlap,
+  circularCushionTime,
+  contactDistance,
+  landingTime,
+  linearCushionTime,
+  linearCushionTime3D,
+  offTableTime,
+  pocketTime,
+} from "./detect.ts"
 import { squaredNorm, sub, ZERO } from "./math/vec3.ts"
 import {
   applyTransition,
@@ -34,6 +45,7 @@ import {
 } from "./motion.ts"
 import { DEFAULT_CUE_SPECS, DEFAULT_MODEL_CONFIG, type BallParams, type CueSpecs, type ModelConfig } from "./params.ts"
 import { resolveBallBall } from "./resolve/ball-ball.ts"
+import { resolveBallTable, resolveOffTable } from "./resolve/ball-table.ts"
 import { resolveCircularCushion, resolveLinearCushion } from "./resolve/cushion.ts"
 import { resolvePocket } from "./resolve/pocket.ts"
 import { resolveStickBall, type CueStrike } from "./resolve/stick-ball.ts"
@@ -46,6 +58,8 @@ export type EventType =
   | "ball_linear_cushion"
   | "ball_circular_cushion"
   | "ball_pocket"
+  | "ball_table"
+  | "ball_off_table"
   | TransitionType
 
 export interface SimEvent {
@@ -72,6 +86,12 @@ export interface Shot {
   config?: ModelConfig
   /** Stop after this many events (all balls are then stopped). Default 10,000. */
   maxEvents?: number
+  /**
+   * "2d" (default): balls stay on the slate, as pooltool's 2D engine.
+   * "3d": balls can leave it: jump shots, hops off rails, flying off the
+   * table (pooltool's `is_3d` engine).
+   */
+  dim?: "2d" | "3d"
 }
 
 export interface ShotResult {
@@ -107,6 +127,9 @@ function tier(type: EventType): number {
     case "rolling_stationary":
     case "spinning_stationary":
       return 2
+    case "ball_off_table":
+      // A ball leaving through a pocket at the same instant is pocketed.
+      return 3
     case "none":
       return 99
     default:
@@ -128,6 +151,8 @@ export function simulate(shot: Shot): ShotResult {
   const config = shot.config ?? DEFAULT_MODEL_CONFIG
   const cueSpecs = shot.cueSpecs ?? DEFAULT_CUE_SPECS
   const maxEvents = shot.maxEvents ?? 10_000
+  const threeD = shot.dim === "3d"
+  const size = shot.table.size
   const balls: Ball[] = shot.balls.map((b) => ({ id: b.id, p: b.params, start: cloneState(b.state), t0: 0 }))
   const n = balls.length
   const cueIndex = balls.findIndex((b) => b.id === shot.cueBall)
@@ -152,6 +177,25 @@ export function simulate(shot: Shot): ShotResult {
   const pockT = new Float64Array(n * nP).fill(NaN)
   const trT = new Float64Array(n)
   const trType: (TransitionType | null)[] = new Array(n).fill(null)
+  // 3D: per-ball landing and leaving-the-table times (NaN = recompute).
+  const tableT = new Float64Array(n).fill(NaN)
+  const offT = new Float64Array(n).fill(NaN)
+  const landing = (i: number): number => {
+    let v = tableT[i]!
+    if (v !== v) {
+      v = threeD ? t + landingTime(current(i), balls[i]!.p) : Infinity
+      tableT[i] = v
+    }
+    return v
+  }
+  const leaving = (i: number): number => {
+    let v = offT[i]!
+    if (v !== v) {
+      v = threeD && size ? t + offTableTime(current(i), balls[i]!.p, size, pockets) : Infinity
+      offT[i] = v
+    }
+    return v
+  }
 
   // Each ball's state at the current time t, evaluated on demand.
   const now: (BallState | null)[] = new Array(n).fill(null)
@@ -183,7 +227,8 @@ export function simulate(shot: Shot): ShotResult {
     if (s.s === MotionState.rolling) return speed * horizon - decel * horizon * horizon
     return speed * horizon + decel * horizon * horizon
   }
-  const horizon = (i: number) => trT[i]! - t
+  // An airborne ball's segment ends when it lands.
+  const horizon = (i: number) => Math.min(trT[i]!, landing(i)) - t
   // Each ball's reach over its own horizon, cached per time step. Reach grows
   // with the horizon, so this also bounds the reach over any shorter one.
   const reachVal = new Float64Array(n)
@@ -232,6 +277,8 @@ export function simulate(shot: Shot): ShotResult {
     pock.rowT[i] = NaN
     nowAt[i] = NaN
     reachAt[i] = NaN
+    tableT[i] = NaN
+    offT[i] = NaN
   }
 
   /** Earliest pending entry of one ball–object cache, computing stale entries. */
@@ -290,10 +337,13 @@ export function simulate(shot: Shot): ShotResult {
     let tr = NONE
     for (let i = 0; i < n; i++) if (trT[i]! < tr.time) tr = { type: trType[i]!, time: trT[i]!, i, j: -1 }
     candidates.push(tr)
-    candidates.push(earliest(lin, "ball_linear_cushion", (s, p, k) => linearCushionTime(s, p, linear[k]!),
+    candidates.push(earliest(lin, "ball_linear_cushion",
+      threeD ? (s, p, k) => linearCushionTime3D(s, p, linear[k]!) : (s, p, k) => linearCushionTime(s, p, linear[k]!),
       (s, p, k) => {
         const g = lineGeom[k]!
-        return Math.abs(g.l0 + g.lx * s.r[0] + g.ly * s.r[1]) / g.ln - contactDistance(p.R, linear[k]!)
+        const dist = Math.abs(g.l0 + g.lx * s.r[0] + g.ly * s.r[1]) / g.ln
+        // In 3D a ball in the air can touch the nose from above, at any horizontal distance up to R + nose.
+        return dist - (threeD ? p.R + linear[k]!.noseRadius : contactDistance(p.R, linear[k]!))
       }))
     candidates.push(earliest(circ, "ball_circular_cushion", (s, p, k) => circularCushionTime(s, p, circular[k]!),
       (s, p, k) => Math.hypot(s.r[0] - circular[k]!.center[0], s.r[1] - circular[k]!.center[1]) - circular[k]!.radius - p.R))
@@ -311,7 +361,10 @@ export function simulate(shot: Shot): ShotResult {
           else if (ballsOverlap(a, b, balls[i]!.p.R, balls[j]!.p.R)) v = t
           else {
             const gap = Math.hypot(a.r[0] - b.r[0], a.r[1] - b.r[1]) - balls[i]!.p.R - balls[j]!.p.R
-            v = gap > reach(i) + reach(j) || gap > relativeReach(i, j) ? Infinity : t + ballBallTime(a, balls[i]!.p, b, balls[j]!.p)
+            v =
+              gap > reach(i) + reach(j) || gap > relativeReach(i, j)
+                ? Infinity
+                : t + (threeD ? ballBallTime3D : ballBallTime)(a, balls[i]!.p, b, balls[j]!.p)
           }
           pairT[idx] = v
         }
@@ -319,6 +372,15 @@ export function simulate(shot: Shot): ShotResult {
       }
     }
     candidates.push(bb)
+    if (threeD) {
+      let land = NONE
+      let off = NONE
+      for (let i = 0; i < n; i++) {
+        if (landing(i) < land.time) land = { type: "ball_table", time: landing(i), i, j: -1 }
+        if (leaving(i) < off.time) off = { type: "ball_off_table", time: leaving(i), i, j: -1 }
+      }
+      candidates.push(land, off)
+    }
 
     let tMin = Infinity
     for (const c of candidates) if (c.time < tMin) tMin = c.time
@@ -352,27 +414,35 @@ export function simulate(shot: Shot): ShotResult {
     const bi = balls[ev.i]!
     switch (ev.type) {
       case "stick_ball":
-        post = [resolveStickBall(current(ev.i), bi.p, shot.strike, cueSpecs, config.stickBall)]
+        post = [resolveStickBall(current(ev.i), bi.p, shot.strike, cueSpecs, config.stickBall, threeD)]
         ids = ["cue_stick", bi.id]
         struck = true
         break
       case "ball_ball": {
         const bj = balls[ev.j]!
-        post = resolveBallBall(current(ev.i), current(ev.j), bi.p, bj.p, config.ballBall)
+        post = resolveBallBall(current(ev.i), current(ev.j), bi.p, bj.p, config.ballBall, threeD)
         ids = [bi.id, bj.id]
         break
       }
       case "ball_linear_cushion":
-        post = [resolveLinearCushion(current(ev.i), linear[ev.j]!, bi.p, config.cushion)]
+        post = [resolveLinearCushion(current(ev.i), linear[ev.j]!, bi.p, config.cushion, threeD)]
         ids = [bi.id, linear[ev.j]!.id]
         break
       case "ball_circular_cushion":
-        post = [resolveCircularCushion(current(ev.i), circular[ev.j]!, bi.p, config.cushion)]
+        post = [resolveCircularCushion(current(ev.i), circular[ev.j]!, bi.p, config.cushion, threeD)]
         ids = [bi.id, circular[ev.j]!.id]
         break
       case "ball_pocket":
         post = [resolvePocket(pockets[ev.j]!)]
         ids = [bi.id, pockets[ev.j]!.id]
+        break
+      case "ball_table":
+        post = [resolveBallTable(current(ev.i), bi.p, config.ballTable)]
+        ids = [bi.id]
+        break
+      case "ball_off_table":
+        post = [resolveOffTable(current(ev.i))]
+        ids = [bi.id]
         break
       default:
         post = [applyTransition(current(ev.i), ev.type as TransitionType)]

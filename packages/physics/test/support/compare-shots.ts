@@ -38,6 +38,7 @@ export function compareShot(file: FixtureFile, shot: FixtureShot): ShotCompariso
     strike: shot.cue,
     cueSpecs: toCueSpecs(shot.cue.specs),
     config: toModelConfig(file),
+    dim: file.engine.is_3d ? "3d" : "2d",
   })
   let firstDivergence = -1
   let firstStructuralDivergence = -1

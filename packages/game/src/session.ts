@@ -32,6 +32,8 @@ export interface GameOptions {
   rules?: Partial<RuleOptions>
   /** Breaker of the first rack (the lag isn't simulated). Default player 0. */
   firstBreaker?: Player
+  /** Physics dimensionality: "3d" (default; jumps, hops, balls leaving the table) or "2d". */
+  dim?: "2d" | "3d"
 }
 
 export interface ShotOptions {
@@ -46,6 +48,7 @@ export interface GameSnapshot {
   state: GameState
   balls: [string, BallState][]
   score: [number, number]
+  dim: "2d" | "3d"
 }
 
 export interface Preview {
@@ -77,6 +80,7 @@ export class Game {
   readonly layout: Layout
   readonly params: BallParams
   readonly discipline: Discipline
+  readonly dim: "2d" | "3d"
   state: GameState
   /** Balls on the table (the cue ball is absent only between a scratch and its placement). */
   balls = new Map<string, BallState>()
@@ -87,6 +91,7 @@ export class Game {
 
   constructor(opts: GameOptions) {
     this.discipline = opts.discipline
+    this.dim = opts.dim ?? "3d"
     this.spec = opts.table ?? WPA_9FT
     this.params = opts.ballParams ?? DEFAULT_BALL_PARAMS
     this.table = buildPocketTable(this.spec)
@@ -113,12 +118,13 @@ export class Game {
       state: structuredClone(this.state),
       balls: [...this.balls].map(([id, b]) => [id, structuredClone(b)]),
       score: [...this.score],
+      dim: this.dim,
     }
   }
 
   /** A game at a snapshot's position. */
   static fromSnapshot(snap: GameSnapshot): Game {
-    const g = new Game({ discipline: snap.discipline, table: snap.spec, ballParams: snap.params, rules: snap.state.rules })
+    const g = new Game({ discipline: snap.discipline, table: snap.spec, ballParams: snap.params, rules: snap.state.rules, dim: snap.dim })
     g.state = structuredClone(snap.state)
     g.balls = new Map(snap.balls.map(([id, b]) => [id, structuredClone(b)]))
     g.score = [...snap.score]
@@ -154,6 +160,7 @@ export class Game {
       balls: [...balls].map(([id, state]) => ({ id, params: this.params, state })),
       cueBall: CUE,
       strike,
+      dim: this.dim,
     }
     const result = simulate(shot)
     const traj = trajectories(shot, result)
