@@ -135,7 +135,9 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 - **Optional extras:** cloth nap and table slope.
 
 ### Phase 4: Play with friends
-- Invite link, turn taking and syncing final positions; shot replays. Architecture sketch: [multiplayer-design.md](multiplayer-design.md) (server-authoritative rooms over WebSocket, client-side prediction, hosted with the existing `static_site` and `server_app` modules).
+- Invite link, turn taking and syncing final positions; shot replays.
+- AI agents as players: any seat can be a human, the built-in AI, or an external agent (WebSocket, HTTP or MCP), with server-applied execution noise for fair play and WPA slow-play clocks.
+- Architecture sketch: [multiplayer-design.md](multiplayer-design.md) (server-authoritative rooms over WebSocket, client-side prediction, hosted with the existing `static_site` and `server_app` modules).
 
 ### Later (optional)
 - Accounts, friends lists, leaderboards.

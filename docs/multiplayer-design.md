@@ -1,4 +1,4 @@
-# Phase 4: Multiplayer architecture (sketch)
+# Phase 4: Multiplayer and agent play (architecture sketch)
 
 Status: design sketch, 2026-11-19. Nothing here is built yet.
 
@@ -8,6 +8,7 @@ Status: design sketch, 2026-11-19. Nothing here is built yet.
 - **Fair and consistent.** Both players see the same table after every shot, and neither client can cheat the physics or the referee.
 - **Cheap to host.** It fits the existing setup in `gehsekky-infra`: the static site on S3/CloudFront, plus one small container on the shared host.
 - **Replays** of whole games that can be shared.
+- **Play against AI agents.** Any seat can be a human, our built-in computer opponent, or an external agent: a bot, an LLM agent using tools, a research agent. The same holds for agent-versus-agent games and benchmarks.
 
 **Not goals (yet):** accounts, friends lists, matchmaking with strangers, leaderboards, spectators and chat. These are the plan's "Later" items. The design leaves room for them.
 
@@ -51,12 +52,26 @@ For responsiveness, the shooter's client simulates its own shot immediately and 
 packages/
   physics/    (exists) shared engine
   game/       (exists) rules, Game session, AI
-  protocol/   (new)    message types, validators, protocol version; no runtime deps
+  protocol/   (new)    message types, observation/action schema, validators, protocol version; no runtime deps
+  agent-sdk/  (new)    client for the WebSocket and HTTP APIs, plus the built-in AI as the reference agent
   server/     (new)    Node service: WebSocket rooms, runs Game, Dockerfile
   web/        (exists) adds a net layer: lobby/invite UI, room client
 ```
 
-Games against the computer stay entirely in the browser. The server only carries player-versus-player games, which keeps its load small.
+Solo games against the built-in computer stay entirely in the browser. Server rooms carry everything else: human versus human, human versus agent, and agent versus agent.
+
+### Seats
+
+The room logic never asks what kind of player a seat is. It only waits for the seat's next action:
+
+```ts
+type Seat =
+  | { kind: "human"; token: string }      // web client over WebSocket
+  | { kind: "builtin"; level: AiLevel }   // our AI, run by the server (see "Agent players")
+  | { kind: "agent"; agentId: string }    // external program over WebSocket, HTTP or MCP
+```
+
+A room is a `Game` plus two seats. When it's a seat's turn, the server sends that seat an **observation** and accepts exactly one **action** in reply. Humans, the built-in AI and external agents all go through this one loop. That keeps every kind of seat to the same rules, validation and clocks.
 
 ## Rooms
 
@@ -83,6 +98,8 @@ create ──> waiting (invite link) ──> playing ──> rack over ──> p
 
 JSON over one WebSocket per client (`wss://`). Every message has `{ v: <protocol version>, type, … }`. Every client message is validated with hand-written validators in `packages/protocol`, so there's no schema-library dependency to license-check.
 
+Every seat, human or agent, speaks the same messages. The web client is simply one agent with a UI.
+
 ### Client → server
 
 | type | fields | notes |
@@ -101,6 +118,7 @@ JSON over one WebSocket per client (`wss://`). Every message has `{ v: <protocol
 | `welcome` | `seat`, `seatToken`, `snapshot` | `snapshot` = rules `GameState`, ball positions, score, `shotSeq`, physics version |
 | `shot` | `shotSeq`, `shooter`, `strike`, `call`, `pushOut`, `placement`, `final`, `ruling` | inputs (for local replay) plus authoritative results |
 | `decided` | `shotSeq`, `option`, `ruling`, `snapshot` | |
+| `yourTurn` | `shotSeq`, `observation`, `deadline` | sent to the seat that must act (see "Agent players") |
 | `events` | `shotSeq`, `events` | on request, when prediction diverged |
 | `opponentAim`, `presence`, `matchOver`, `error`, `pong` | | |
 
@@ -118,6 +136,87 @@ JSON over one WebSocket per client (`wss://`). Every message has `{ v: <protocol
 
 The server then runs `Game.shoot` and broadcasts `shot` to both seats. A break simulates in about 2 ms and a typical shot in about 0.1 ms, so there's no queue to speak of.
 
+## Agent players
+
+### Observation and action
+
+Pool is a perfect-information game: everything a player could see at the table goes into the observation. It's versioned JSON, in SI units in the physics frame (x across, y along, z up; head rail at y = 0), and self-describing so an agent needs no other documentation:
+
+- `table`: the `TableSpec`, plus derived geometry (rail segments, jaws, pocket ids and capture circles, head string, foot spot);
+- `balls`: id, position and ball parameters (R, mass, friction coefficients);
+- `rules`: discipline, rule options, shooter, groups, **legal targets**, the lowest ball, ball in hand (none / kitchen / table), whether a push out is available, the pending decision and its options, consecutive fouls, score and race length;
+- `lastShot`: the opponent's previous strike, the ruling and its notes, and an event summary (first contact, pocketed balls, rails);
+- `clock`: the deadline for this action;
+- `versions`: protocol and physics.
+
+An action is one of:
+- `{ shoot: { strike, call, pushOut, placement } }`;
+- `{ decide: option }`;
+- `{ resign: true }`.
+
+These are the same fields a human's `shoot` and `decide` messages carry. The server validates them identically.
+
+### Transports
+
+Agents differ in what they can speak, so the room exposes three adapters over the same seat loop:
+
+| Transport | Suits | Shape |
+|---|---|---|
+| **WebSocket** | classic bots, research agents | the protocol above |
+| **HTTP** | scripts, batch evaluation | `GET /rooms/{id}/observation?wait=30` (long-poll until it's your turn), `POST /rooms/{id}/actions` |
+| **MCP server** | LLM agents with tool use | tools: `get_observation`, `preview_shot`, `take_shot`, `decide`, `resign`; a thin wrapper over the HTTP API |
+
+### Simulating ahead
+
+A strong agent wants to try shots before taking one, as our built-in AI does with `Game.preview`. There are two ways:
+
+1. **Locally (preferred).** `@pixelpoolhall/physics` and `@pixelpoolhall/game` are MIT; publish them to npm. An agent on Node gets results bit-identical to the server's for the same physics version, which the observation reports. Agents in other languages can call a small CLI or HTTP wrapper of their own.
+2. **Server-side `preview_shot`**, for agents that can't run JavaScript (most LLM agents). The server runs `Game.preview` on the room's current position and returns the outcome:
+   - final positions, pocketed balls and the ruling;
+   - optionally the event summary.
+
+   It costs real CPU, so it's metered:
+   - a budget per turn (e.g. 50 previews), rate limits per agent key, and a global cap;
+   - it runs in the worker pool (below), never on the main event loop.
+
+### Fair play: execution noise
+
+A human aims with a mouse; an agent sends `phi` to 15 digits. Without a correction, any agent that simulates well is superhuman. Each room therefore has a **noise model**, which the server applies to each seat's strike before simulating:
+
+| Setting | Use |
+|---|---|
+| `exact` | agent-versus-agent benchmarks and research |
+| `human` (default when a human plays an agent) | per-seat σ for aim, speed and tip, using the same model as the built-in AI levels (`executionNoise`); the agent can choose a level, or one is assigned |
+| `matched` | both seats get the same noise, humans included |
+
+The noise comes from the server's RNG, so a client can't influence it. The strike actually executed is reported in the `shot` message, so agents can learn from the difference. The built-in AI already plays by these rules; its levels are noise settings.
+
+### Clocks
+
+An agent that never answers mustn't stall a room. Each action has a deadline: by default 60 s for agents and none for humans (configurable per room up to 5 min, since LLM agents are slow). Missing the deadline is **WPA 3.14 slow play: a standard foul**, so the opponent gets ball in hand. Three in a row forfeit the match. A pending decision that times out takes its first option. These clocks are rules the referee already knows, not special cases.
+
+### The built-in AI as a seat
+
+`planShot` takes 40–400 ms of CPU, which would block the server's event loop. The server runs it, and `preview_shot`, in a **`worker_threads` pool** sized below the host's core count, with a queue. That makes the built-in AI available wherever a server room needs it:
+- a human playing it online;
+- an external agent benchmarking against Easy, Medium or Hard.
+
+The built-in AI is also the **reference agent**: a small `agent-sdk` example drives it through the public API, which keeps the API honest and gives agent authors a working starting point.
+
+### Identity, trust and limits
+
+- **No third-party code runs on our servers.** Agents connect from outside and only send actions, which are validated like any human's.
+- **Agent keys.** An agent seat needs a key, both for rate limiting and for any future rating. The simplest version is a human creating a room and giving its link to their agent, which joins as an anonymous agent seat. Registered keys (self-serve or issued by hand) come with the "Later" accounts work.
+- **Limits per key:** concurrent rooms, actions per minute, preview budget. Abusive keys can be revoked.
+- **Room labels.** The observation and the UI say what each seat is, so a human always knows they're playing an agent and at what noise setting.
+
+### Agent-versus-agent and evaluation
+
+- Rooms where both seats are agents run without animation; their pace is just the agents' latency.
+- Spectators can watch through a read-only link, which the broadcast design already supports.
+- Every game's replay file (inputs, executed strikes, results) is a clean evaluation record.
+- **Later:** an "arena" with ratings (e.g. Glicko-2) per agent key, and fixed benchmark suites (racks from fixed seeds, `exact` noise) for comparing agents.
+
 ## Versioning
 
 - **Protocol version:** a mismatch makes the client reload, so it picks up the new static bundle.
@@ -128,6 +227,7 @@ The server then runs `Game.shoot` and broadcasts `shot` to both seats. A break s
 
 - **Node 26, one process.** The physics and game packages run unchanged.
 - **WebSocket library:** `ws` (MIT), the de facto standard. Node 26 ships a WebSocket client but no server. To be license-checked like everything else.
+- **CPU work** (the built-in AI and agent previews) runs in a `worker_threads` pool, never on the main event loop (see "Agent players").
 - **State:** rooms live in memory. A room is a `Game` plus seats and timers, a few tens of KB. A t4g.small could hold thousands of idle rooms; CPU is spent only while a shot simulates.
 - **Persistence:** none at first; restarting loses active rooms. If that hurts, snapshot rooms (initial positions, the shot input list, seat tokens) to SQLite or Redis. A game is fully reconstructable from its inputs plus the per-shot final positions.
 - **Abuse limits:**
@@ -171,8 +271,10 @@ The final positions make it portable. A player on any engine re-simulates each s
 2. `packages/server`: rooms, `shoot`/`decide`, reconnect, timers. Tested in-process.
 3. Web net layer: create/join UI, invite link, prediction plus reconciliation, presence, live opponent cue.
 4. Infra: domain, static site, server app, edge site file with WebSocket upgrade; CI deploy.
-5. Replays: export and import.
-6. The cross-engine determinism report; decide on deterministic math.
+5. Agent seats: the observation schema, the HTTP adapter, deadlines (3.14), the noise model, and the worker pool for the built-in AI and `preview_shot`.
+6. `agent-sdk` with the built-in AI as the reference agent; publish `physics` and `game` to npm; the MCP adapter.
+7. Replays: export and import.
+8. The cross-engine determinism report; decide on deterministic math.
 
 ## Open questions
 
@@ -180,3 +282,7 @@ The final positions make it portable. A player on any engine re-simulates each s
 - **Chat.** Free-text chat brings moderation and abuse work. I'd suggest preset quick messages ("Nice shot", "Good game") only.
 - **Spectators** via a read-only link. Cheap to add later, since the server already broadcasts.
 - **Race length** and match format defaults (race to 5?).
+- **Agent identity:** anonymous agent seats via invite links only at first, or self-serve agent keys from the start?
+- **Default noise** for human-versus-agent games: should an agent choose its level (shown to the human) or always get a fixed "human" level?
+- **`preview_shot` budget** per turn, and whether agent-versus-agent rooms get previews at all (they could simulate locally).
+- **Publishing** `physics` and `game` on npm under MIT now, so agents can simulate locally.
