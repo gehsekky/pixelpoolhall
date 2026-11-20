@@ -99,12 +99,14 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 - ✅ **Reference harness:** `tools/reference/pooltool_fixtures.py` runs pooltool (pinned commit) on 279 shots in 8 categories and exports deterministic JSON fixtures to `packages/physics/test/fixtures/pooltool/`. Tests check the fixtures for integrity, pooltool's contact conventions and physical invariants; our engine will be tested against them in Phase 1.
 
 ### Phase 1: Physics core (2D, on the table)
-- Event loop, motion states, exact transition times, caching.
-- Quartic solver with root polishing.
-- Ball–ball collisions (frictional inelastic with throw), cushions (Stronge compliant), jaws, the cue strike with squirt.
-- Pockets: start with pooltool's simple "canonical" model.
-- A 2D debug view showing event markers.
-- **Exit criterion:** our engine matches the pooltool fixtures within the tolerances in the physics design.
+- ✅ Event loop, motion states, exact transition times, caching (`packages/physics/src/engine.ts`).
+- ✅ Event detection with our own quartic solver (`detect.ts`).
+- ✅ Ball–ball collisions (frictional inelastic with throw), cushions (Stronge compliant), jaws, the cue strike with squirt (`resolve/`).
+- ✅ Pockets: pooltool's simple "canonical" model.
+- ✅ **Exit criterion met (2026-11-19):** all 279 pooltool fixture shots reproduce the same event sequence. Outside the breaks, times agree within 1e-9 s; every shot's final positions agree within 0.52 µm. See physics-design.md, "Validation strategy".
+- To do: **performance**. A typical shot takes 0.1–0.7 ms, but a break takes ~19 ms. Next: min-heap event queue, numeric cache keys, allocation-free hot paths; target ≥ 1,000 shots/s including breaks.
+- To do: **table builder** (`TableSpec` → cushions, jaws, pockets). The engine currently takes geometry exported from pooltool.
+- To do: a 2D debug view showing event markers (with the `web` package).
 
 ### Phase 2: Playable game
 - A Three.js table, aiming UI, and controls for spin, elevation and power.

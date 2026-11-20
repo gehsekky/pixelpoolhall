@@ -8,7 +8,15 @@ Event-based billiards physics engine. See
 | Component | State |
 |---|---|
 | Polynomial root solvers (quadratic, cubic, quartic) | Done, verified against exact roots |
-| Everything else in the design | Not started |
+| 2D engine: motion, detection, cue strike, ball–ball, rails, jaws, pockets | Done, matches all 279 pooltool fixture shots (see `test/engine.test.ts`) |
+| Performance work, table builder, 3D (airborne), pocket interior | Not started |
+
+```ts
+import { simulate } from "@pixelpoolhall/physics"
+const result = simulate({ table, balls, cueBall: "cue", strike: { V0: 2, phi: 90, theta: 0, a: 0, b: 0.2 } })
+result.events // ordered events, each with the post-event state of the balls involved
+result.final  // every ball's final state
+```
 
 ## Root solvers
 

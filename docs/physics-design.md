@@ -68,7 +68,7 @@ Each ball is always in exactly one state. Within a state, the acceleration is co
 
 | State | Condition | Equations of motion (τ = t − t0) | Ends when |
 |---|---|---|---|
-| **Sliding** | `|u| > 0` | `û` (the slip direction) is constant. `v(τ) = v0 − μs·g·τ·û`, `r(τ) = r0 + v0·τ − ½μs·g·τ²·û`, `ω⊥(τ) = ω⊥0 − (5μs·g/2R)·τ·(ẑ × û)` | `τ = 2|u0| / (7μs·g)` → **rolling** |
+| **Sliding** | `|u| > 0` | `û` (the slip direction) is constant. `v(τ) = v0 − μs·g·τ·û`, `r(τ) = r0 + v0·τ − ½μs·g·τ²·û`, `ω⊥(τ) = ω⊥0 + (5μs·g/2R)·τ·(ẑ × û)` (friction `−μs·m·g·û` acts at the contact point `−R·ẑ`; this sign was wrong in the first draft and was caught when checking against pooltool) | `τ = 2|u0| / (7μs·g)` → **rolling** |
 | **Rolling** | `u = 0`, `|v| > 0` | `v(τ) = v0 − μr·g·τ·v̂0`, `r(τ) = r0 + v0·τ − ½μr·g·τ²·v̂0`, `ω⊥ = (ẑ × v)/R` | `τ = |v0| / (μr·g)` → **spinning** or **stationary** |
 | **Spinning** | `v = 0`, `ωz ≠ 0` | `ωz(τ) = ωz0 − sign(ωz0)·(5μsp·g/2R)·τ` | `τ = |ωz0|·2R / (5μsp·g)` → **stationary** |
 | **Stationary** | — | — | Only a collision ends it |
@@ -260,6 +260,23 @@ All parameters live in one typed registry. Each entry records its **value, unit,
      - Resolved contacts are left 1 µm apart (`MIN_DIST`). Our `MIN_GAP` is 1e-9 m, so post-contact positions differ by up to about 1 µm by design.
      - Rails are nose cylinders at cushion height, with contact in 3D.
      - Frozen or following balls "chatter" through hundreds of micro-collisions (1,218 events in one combination shot). Compare those shots by outcome.
+   - **Phase 1 engine results (2026-11-19, `packages/physics/test/engine.test.ts`):**
+     - All 279 fixture shots (5,323 events) give the **same event sequence** as pooltool: same types, same balls, same order.
+     - **Outside the breaks**, event times agree within 7.7e-10 s and post-event states within 7e-9 (relative).
+     - **Breaks** are chaotic: a rounding-level difference roughly doubles at each collision, reaching 2.4e-6 s by event ~100. They are held to the sequence and final-position criteria.
+     - **Final positions** are within 0.52 µm of pooltool's for every shot, including the breaks.
+     - **Component checks** (each against every fixture event, independent of detection):
+       - motion and transitions: 2,470 transitions, times to 2e-16 relative;
+       - cue strike: 9e-16;
+       - ball–ball: 1.5e-12;
+       - rails: 6e-14;
+       - jaws: 5e-14;
+       - pockets: exact.
+     - **Our engine's output satisfies the invariants:** energy never increases, every shot ends at rest, and no balls overlap.
+   - **Findings while matching pooltool:**
+     - **Stronge slip time.** In the slip–stick–slip case, the function whose root gives "slip resumes" is exactly zero where sticking *begins*, and stays ≤ 0 until the true root. pooltool brackets [t_c, t_f] and gets the right root only through its solver's iteration path; a different solver (Brent) landed on the stick start on 3 of 766 rail hits. We search for the first upward crossing after the stick start explicitly (`resolve/stronge.ts`).
+     - **Cue tip.** pooltool's cue-strike docstring says the tip radius shifts the contact point, but 0.6.0's code doesn't apply it. We match the code, and flag it for Phase 3 fitting.
+     - **Jaw normal.** pooltool takes the jaw contact normal from a point at cushion height (so it has a vertical component), while it detects jaw contact in the table plane. We match this for now.
 4. **Tests against measured data (Phase 3).**
    - Alciatore's published measurements: throw curves, squirt, cushion rebound angles.
    - Our own high-speed video, recorded where possible.

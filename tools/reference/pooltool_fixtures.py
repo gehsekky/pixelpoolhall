@@ -277,7 +277,7 @@ def export_shot(shot: Shot) -> dict:
     system.cue.set_state(V0=strike.V0, phi=strike.phi, theta=strike.theta,
                          a=strike.a, b=strike.b, cue_ball_id="cue")
     initial = [{"id": bid, "params": to_plain(b.params), **ball_state(b)}
-               for bid, b in sorted(system.balls.items())]
+               for bid, b in system.balls.items()]  # pooltool order: it sets tie-breaking
     pt.simulate(system, engine=engine(), inplace=True, max_events=MAX_EVENTS)
 
     events = []
@@ -298,7 +298,7 @@ def export_shot(shot: Shot) -> dict:
         "cue": {"ball": "cue", "V0": strike.V0, "phi": strike.phi, "theta": strike.theta,
                 "a": strike.a, "b": strike.b, "specs": to_plain(system.cue.specs)},
         "events": events,
-        "final": {bid: ball_state(b) for bid, b in sorted(system.balls.items())},
+        "final": {bid: ball_state(b) for bid, b in system.balls.items()},
     }
 
 
