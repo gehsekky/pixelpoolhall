@@ -17,4 +17,17 @@ export { EIGHT, groupOf, legalTargets, SOLIDS, STRIPES } from "./rules/eight-bal
 export { lowestBall, NINE, NINE_BALLS } from "./rules/nine-ball.ts"
 export { FOUL_TEXT } from "./rules/common.ts"
 export { Game, type GameOptions, type GameSnapshot, type Preview, type ShotOptions, type ShotRecord } from "./session.ts"
-export { AI_LEVELS, bestEase, chooseOption, executionNoise, planShot, shotGeometry, type AiLevel, type AiPlan } from "./ai.ts"
+export {
+  AI_LEVELS,
+  bankCandidates,
+  bestEase,
+  chooseOption,
+  comboCandidates,
+  executionNoise,
+  kickCandidates,
+  planShot,
+  pushCandidates,
+  shotGeometry,
+  type AiLevel,
+  type AiPlan,
+} from "./ai.ts"

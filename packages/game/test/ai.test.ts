@@ -1,6 +1,6 @@
 import { MotionState, type BallState } from "@pixelpoolhall/physics"
 import { describe, expect, it } from "vitest"
-import { AI_LEVELS, chooseOption, planShot, shotGeometry } from "../src/ai.ts"
+import { AI_LEVELS, bankCandidates, chooseOption, kickCandidates, planShot, pushCandidates, shotGeometry } from "../src/ai.ts"
 import { createRng } from "../src/rng.ts"
 import { Game } from "../src/session.ts"
 import { CUE } from "../src/types.ts"
@@ -74,5 +74,54 @@ describe("computer opponent", () => {
       g.shoot(plan.strike, { call: plan.call })
     }
     expect(g.state.winner).not.toBeNull()
+  })
+
+  const noiseless = { ...AI_LEVELS.hard, finalists: 0 }
+
+  it("banks: a solved bank pockets the ball after a rail", () => {
+    const g = setUp("9-ball", { cue: [0.635, 0.7], "1": [0.4, 1.27], "9": [1.0, 2.3] })
+    const banks = bankCandidates(g, 0, noiseless, g.balls)
+    expect(banks.length).toBeGreaterThan(0)
+    const made = banks.filter((c) => {
+      const p = g.preview(c.strike, {}, g.balls)
+      const pocketed = p.facts.pocketed.find((x) => x.ball === "1")
+      const railBefore = p.result.events.some(
+        (e) => (e.type === "ball_linear_cushion" || e.type === "ball_circular_cushion") && e.ids[0] === "1" && (!pocketed || e.time < pocketed.time),
+      )
+      return pocketed?.pocket === c.target!.pocket && railBefore
+    })
+    expect(made.length).toBeGreaterThan(0)
+  })
+
+  it("combinations: plays the 1–9 combination to win when the 1 itself is blocked", () => {
+    // Cue ball, 1 and 9 on the diagonal to the foot-right corner.
+    const g = setUp("9-ball", { cue: [0.75, 2.02], "1": [0.95, 2.22], "9": [1.1, 2.37], "5": [0.3, 0.6] })
+    const plan = planShot(g, noiseless, createRng(3))
+    expect(plan.kind).toBe("combo")
+    const rec = g.shoot(plan.strike, { call: plan.call })
+    expect(rec.facts.firstContacts).toEqual(["1"])
+    expect(g.state.winner).toBe(0)
+  })
+
+  it("kicks: escapes a snooker with legal contact", () => {
+    // A wall of three balls between the cue ball and the 1.
+    const g = setUp("9-ball", { cue: [0.3, 0.5], "1": [0.3, 2.0], "2": [0.22, 1.25], "3": [0.28, 1.25], "4": [0.34, 1.25], "9": [1.0, 2.3] })
+    expect(shotGeometry(g, [0.3, 0.5], "1", "lt", g.balls)!.ease).toBe(0)
+    const kicks = kickCandidates(g, 0, noiseless, g.balls)
+    const legal = kicks.filter((c) => g.preview(c.strike, {}, g.balls).ruling.fouls.length === 0)
+    expect(legal.length).toBeGreaterThan(0)
+    const plan = planShot(g, noiseless, createRng(4))
+    const rec = g.shoot(plan.strike, { call: plan.call, pushOut: plan.pushOut })
+    expect(rec.ruling.fouls).toEqual([])
+  })
+
+  it("push outs: the best push leaves the choice to the opponent", () => {
+    const g = setUp("9-ball", { cue: [0.3, 0.5], "1": [0.3, 2.0], "2": [0.22, 1.25], "3": [0.28, 1.25], "4": [0.34, 1.25], "9": [1.0, 2.3] })
+    g.state = { ...g.state, pushOutAvailable: true }
+    const pushes = pushCandidates(g, g.balls).sort((a, b) => b.value - a.value)
+    expect(pushes[0]!.value).toBeLessThanOrEqual(0)
+    const rec = g.shoot(pushes[0]!.strike, { pushOut: true })
+    expect(rec.ruling.fouls).toEqual([])
+    expect(g.state.pending?.kind).toBe("after_push_out")
   })
 })

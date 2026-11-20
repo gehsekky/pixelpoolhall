@@ -153,6 +153,8 @@ type Opponent = "human" | keyof typeof AI_LEVELS
 let opponent: Opponent = "medium"
 let aiRng = createRng(1)
 let aiDeciding = false
+/** The computer's push-out declaration for the shot it's about to play. */
+let aiPushOut = false
 
 /** Whoever must act now: the chooser of a pending decision, else the shooter. */
 const actor = (): Player => game.state.pending?.player ?? game.state.shooter
@@ -220,6 +222,8 @@ function startAiTurn(): void {
     setTip(strike.a, strike.b)
     call = plan.call
     callManual = true
+    aiPushOut = plan.pushOut
+    lastNotes = [`${playerName(AI_PLAYER)} plays ${plan.description}.`]
     mode = { kind: "ai", phase: "aim", t: 0, plan, strike, fromPhi: aim.phi, pull: 0 }
     updateHud()
   })
@@ -904,7 +908,8 @@ function frame(now: number): void {
 }
 
 function shoot(V0: number): void {
-  const record = game.shoot({ V0, phi: aim.phi, theta: aim.theta, a: aim.a, b: aim.b }, { pushOut: pushOut.checked, call: needsCall() ? call : null })
+  const record = game.shoot({ V0, phi: aim.phi, theta: aim.theta, a: aim.a, b: aim.b }, { pushOut: humanTurn() ? pushOut.checked : aiPushOut, call: needsCall() ? call : null })
+  aiPushOut = false
   call = null
   callManual = false
   mode = { kind: "replay", record, t: 0 }

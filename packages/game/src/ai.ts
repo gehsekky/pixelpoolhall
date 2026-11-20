@@ -17,9 +17,13 @@
  * 4. Execution. The chosen strike is perturbed by the level's aim, speed
  *    and tip noise. That's how the computer misses.
  *
- * Not yet: kick and bank shots, combinations, intentional push outs.
+ * Harder shots (banks, kicks, combinations) are searched only when the
+ * direct options are weak. Their aim comes from mirror geometry and is then
+ * solved in the simulation: sweep the aim, measure the signed miss, and
+ * root-find where it crosses zero. At 9-ball the computer also pushes out
+ * when it has no good shot.
  */
-import { MotionState, type BallState, type CueStrike } from "@pixelpoolhall/physics"
+import { MotionState, stateAtTime, type BallState, type CueStrike } from "@pixelpoolhall/physics"
 import { legalTargets } from "./rules/eight-ball.ts"
 import { lowestBall } from "./rules/nine-ball.ts"
 import type { Point } from "./layout.ts"
@@ -54,10 +58,14 @@ export interface AiPlan {
   call: Call | null
   /** Where to put the cue ball first, when it's in hand. */
   placement: Point | null
-  kind: "break" | "pot" | "safety"
+  kind: "break" | "pot" | "bank" | "combo" | "kick" | "safety" | "push"
+  /** 9-ball: declare this shot a push out. */
+  pushOut: boolean
   /** Expected score (see the module comment). */
   value: number
   target?: { ball: string; pocket: string }
+  /** Plain-language description, e.g. "bank the 3 off the left rail into the foot-right corner". */
+  description: string
 }
 
 // ---------- Scoring ----------
@@ -194,10 +202,22 @@ interface Candidate {
   call: Call | null
   placement: Point | null
   kind: AiPlan["kind"]
+  pushOut?: boolean
   target?: { ball: string; pocket: string }
+  description: string
   balls: ReadonlyMap<string, BallState>
   value: number
 }
+
+const POCKET_TEXT: Record<string, string> = {
+  lb: "head-left corner",
+  lc: "left side",
+  lt: "foot-left corner",
+  rb: "head-right corner",
+  rc: "right side",
+  rt: "foot-right corner",
+}
+const pocketText = (id: string) => POCKET_TEXT[id] ?? id
 
 const SPEEDS = [1.3, 2.2, 3.4, 5]
 const TIP_HEIGHTS = [-0.35, 0, 0.35]
@@ -245,7 +265,16 @@ function potCandidates(game: Game, me: Player, level: AiLevel, balls: ReadonlyMa
             }
           }
         }
-        out.push({ strike: strike(phi), call, placement, kind: "pot", target: { ball, pocket }, balls, value: score(game, me, p, level) })
+        out.push({
+          strike: strike(phi),
+          call,
+          placement,
+          kind: "pot",
+          target: { ball, pocket },
+          description: `the ${ball} in the ${pocketText(pocket)}`,
+          balls,
+          value: score(game, me, p, level),
+        })
       }
     }
   }
@@ -258,7 +287,322 @@ function safetyCandidates(game: Game, me: Player, level: AiLevel, balls: Readonl
   for (let deg6 = 0; deg6 < 360; deg6 += 6) {
     for (const V0 of [0.9, 1.8]) {
       const strike: CueStrike = { V0, phi: deg6, theta: 0, a: 0, b: 0 }
-      out.push({ strike, call, placement, kind: "safety", balls, value: score(game, me, game.preview(strike, { call }, balls), level) })
+      out.push({ strike, call, placement, kind: "safety", description: "a safety", balls, value: score(game, me, game.preview(strike, { call }, balls), level) })
+    }
+  }
+  return out
+}
+
+// ---------- Harder shots: aim solved in the simulation ----------
+
+/**
+ * Signed closest approach (m) of `ball`'s path to point P: positive if P
+ * passes on the ball's left. The path is sampled per trajectory segment
+ * (each a parabola) and measured against the polyline. Zero if the ball was
+ * pocketed in `pocket`. Null if the ball never moved.
+ */
+function pathMiss(p: Preview, ball: string, P: Point, pocket?: string): number | null {
+  if (pocket && p.facts.pocketed.some((x) => x.ball === ball && x.pocket === pocket)) return 0
+  const tb = p.trajectories.balls.find((b) => b.id === ball)
+  if (!tb) return null
+  const until = p.facts.pocketed.find((x) => x.ball === ball)?.time ?? p.trajectories.duration
+  const pts: Point[] = []
+  tb.segments.forEach((seg, i) => {
+    const t0 = seg.t0
+    if (t0 >= until && i > 0) return
+    const t1 = Math.min(until, i + 1 < tb.segments.length ? tb.segments[i + 1]!.t0 : until)
+    const one = { ...tb, segments: [seg] }
+    for (let k = 0; k <= 12; k++) {
+      const r = stateAtTime(one, t0 + ((t1 - t0) * k) / 12).r
+      pts.push([r[0], r[1]])
+    }
+  })
+  let best = Infinity
+  let signed: number | null = null
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i]!
+    const b = pts[i + 1]!
+    const dx = b[0] - a[0]
+    const dy = b[1] - a[1]
+    const len2 = dx * dx + dy * dy
+    if (len2 < 1e-14) continue
+    const t = Math.max(0, Math.min(1, ((P[0] - a[0]) * dx + (P[1] - a[1]) * dy) / len2))
+    const cx = a[0] + t * dx
+    const cy = a[1] + t * dy
+    const d = Math.hypot(P[0] - cx, P[1] - cy)
+    if (d < best) {
+      best = d
+      signed = Math.sign(dx * (P[1] - cy) - dy * (P[0] - cx)) * d
+    }
+  }
+  return signed
+}
+
+/**
+ * Solve the aim φ for f(φ) = 0 near φ₀: sample [φ₀ − span, φ₀ + span],
+ * take the sign change nearest φ₀, then refine with the Illinois variant of
+ * regula falsi. `f` returns null where the shot is invalid (e.g. the wrong
+ * first contact). Returns the best preview found, or null.
+ */
+function solveAim(phi0: number, span: number, f: (phi: number) => { v: number | null; p: Preview }, samples = 9, iters = 5): { phi: number; p: Preview } | null {
+  const xs: { phi: number; v: number | null; p: Preview }[] = []
+  for (let i = 0; i < samples; i++) {
+    const phi = phi0 - span + (2 * span * i) / (samples - 1)
+    xs.push({ phi, ...f(phi) })
+  }
+  const zero = xs.find((x) => x.v === 0)
+  if (zero) return zero
+  let bracket: [(typeof xs)[number], (typeof xs)[number]] | null = null
+  for (let i = 0; i + 1 < xs.length; i++) {
+    const a = xs[i]!
+    const b = xs[i + 1]!
+    if (a.v === null || b.v === null || Math.sign(a.v) === Math.sign(b.v)) continue
+    // Jumps across a discontinuity (e.g. a jaw) aren't real crossings.
+    if (Math.abs(a.v) > 0.25 || Math.abs(b.v) > 0.25) continue
+    if (!bracket || Math.abs((a.phi + b.phi) / 2 - phi0) < Math.abs((bracket[0].phi + bracket[1].phi) / 2 - phi0)) bracket = [a, b]
+  }
+  if (!bracket) return null
+  let [a, b] = bracket
+  let fa = a.v!
+  let fb = b.v!
+  let side = 0
+  let best = Math.abs(fa) < Math.abs(fb) ? a : b
+  for (let k = 0; k < iters; k++) {
+    const phi = (a.phi * fb - b.phi * fa) / (fb - fa)
+    const c = { phi, ...f(phi) }
+    if (c.v === null) break
+    if (Math.abs(c.v) < Math.abs(best.v!)) best = c
+    if (c.v === 0) break
+    if (Math.sign(c.v) === Math.sign(fb)) {
+      b = c
+      fb = c.v
+      if (side === -1) fa /= 2
+      side = -1
+    } else {
+      a = c
+      fa = c.v
+      if (side === 1) fb /= 2
+      side = 1
+    }
+  }
+  return best
+}
+
+/** The four rails as the lines a ball's center reflects off: [axis, coordinate, name]. */
+function railLines(game: Game): [0 | 1, number, string][] {
+  const R = game.params.R
+  const { w, l } = game.spec
+  return [
+    [0, R, "left rail"],
+    [0, w - R, "right rail"],
+    [1, R, "head rail"],
+    [1, l - R, "foot rail"],
+  ]
+}
+
+const mirror = (p: Point, axis: 0 | 1, c: number): Point => (axis === 0 ? [2 * c - p[0], p[1]] : [p[0], 2 * c - p[1]])
+
+const firstContactIs = (p: Preview, ball: string) => p.facts.firstContacts[0] === ball
+
+/** Aim (degrees) from the cue ball at C to send the ball at O toward D, plus that shot's cut angle. */
+function aimToSend(game: Game, C: Point, O: Point, D: Point): { phi: number; cut: number } {
+  const R = game.params.R
+  const dx = D[0] - O[0]
+  const dy = D[1] - O[1]
+  const n = Math.hypot(dx, dy)
+  const ghost: Point = [O[0] - (2 * R * dx) / n, O[1] - (2 * R * dy) / n]
+  const vx = ghost[0] - C[0]
+  const vy = ghost[1] - C[1]
+  const cut = deg(Math.acos(Math.max(-1, Math.min(1, (vx * dx + vy * dy) / (Math.hypot(vx, vy) * n)))))
+  return { phi: deg(Math.atan2(vy, vx)), cut }
+}
+
+/** Whether any ball other than `except` lies within 2R of the segment a–b. */
+function blocked(game: Game, balls: ReadonlyMap<string, BallState>, a: Point, b: Point, except: string[]): boolean {
+  for (const [id, s] of balls) if (!except.includes(id) && segDist(xy(s), a, b) < 2 * game.params.R) return true
+  return false
+}
+
+/** One-rail banks: the object ball off a rail into a pocket. */
+export function bankCandidates(game: Game, me: Player, level: AiLevel, balls: ReadonlyMap<string, BallState>): Candidate[] {
+  const cue = balls.get(CUE)
+  if (!cue) return []
+  const C = xy(cue)
+  const out: Candidate[] = []
+  for (const ball of targetsFor(game, game.state, me, balls)) {
+    const O = xy(balls.get(ball)!)
+    for (const pk of game.table.pockets) {
+      const P: Point = [pk.center[0], pk.center[1]]
+      for (const [axis, c, railName] of railLines(game)) {
+        const Pm = mirror(P, axis, c)
+        // The bank point must be on the rail, between the object ball and the mirrored pocket.
+        const t = (c - O[axis]) / (Pm[axis] - O[axis])
+        if (!(t > 0 && t < 1)) continue
+        const hit: Point = [O[0] + t * (Pm[0] - O[0]), O[1] + t * (Pm[1] - O[1])]
+        const along = hit[1 - axis]!
+        const span = axis === 0 ? game.spec.l : game.spec.w
+        if (along < 0.12 || along > span - 0.12) continue
+        if (axis === 1 ? false : Math.abs(along - game.spec.l / 2) < 0.12) continue
+        const { phi, cut } = aimToSend(game, C, O, Pm)
+        if (cut > 65) continue
+        if (blocked(game, balls, C, O, [CUE, ball]) || blocked(game, balls, O, hit, [CUE, ball]) || blocked(game, balls, hit, P, [CUE, ball])) continue
+        const call: Call | null = game.discipline === "8-ball" ? { ball, pocket: pk.id } : null
+        for (const V0 of [2.4, 3.6]) {
+          const strike = (ph: number): CueStrike => ({ V0, phi: ph, theta: 0, a: 0, b: 0 })
+          const sol = solveAim(phi, 1.5, (ph) => {
+            const p = game.preview(strike(ph), { call }, balls)
+            return { p, v: firstContactIs(p, ball) ? pathMiss(p, ball, P, pk.id) : null }
+          })
+          if (!sol) continue
+          out.push({
+            strike: strike(sol.phi),
+            call,
+            placement: null,
+            kind: "bank",
+            target: { ball, pocket: pk.id },
+            description: `bank the ${ball} off the ${railName} into the ${pocketText(pk.id)}`,
+            balls,
+            value: score(game, me, sol.p, level),
+          })
+        }
+      }
+    }
+  }
+  return out
+}
+
+/** Combinations: the cue ball drives a legal ball A into ball B, which goes in. */
+export function comboCandidates(game: Game, me: Player, level: AiLevel, balls: ReadonlyMap<string, BallState>, onlyBall?: string): Candidate[] {
+  const cue = balls.get(CUE)
+  if (!cue) return []
+  const C = xy(cue)
+  const R = game.params.R
+  const out: Candidate[] = []
+  const firsts = targetsFor(game, game.state, me, balls)
+  // At 8-ball the called ball must be a legal one too; at 9-ball any ball counts.
+  const seconds = [...balls.keys()].filter(
+    (id) => id !== CUE && (onlyBall ? id === onlyBall : game.discipline === "9-ball" || firsts.includes(id)),
+  )
+  for (const a of firsts) {
+    const A = xy(balls.get(a)!)
+    for (const b of seconds) {
+      if (b === a) continue
+      const B = xy(balls.get(b)!)
+      if (Math.hypot(B[0] - A[0], B[1] - A[1]) > 0.8) continue
+      for (const pk of game.table.pockets) {
+        const P: Point = [pk.center[0], pk.center[1]]
+        const dB = Math.hypot(P[0] - B[0], P[1] - B[1])
+        const ghostB: Point = [B[0] - (2 * R * (P[0] - B[0])) / dB, B[1] - (2 * R * (P[1] - B[1])) / dB]
+        // Cut at B: A arrives along A→ghostB.
+        const ax = ghostB[0] - A[0]
+        const ay = ghostB[1] - A[1]
+        const cutB = deg(Math.acos(Math.max(-1, Math.min(1, (ax * (P[0] - B[0]) + ay * (P[1] - B[1])) / (Math.hypot(ax, ay) * dB)))))
+        if (cutB > 45) continue
+        const { phi, cut } = aimToSend(game, C, A, ghostB)
+        if (cut > 55) continue
+        if (blocked(game, balls, C, A, [CUE, a]) || blocked(game, balls, A, ghostB, [CUE, a, b]) || blocked(game, balls, B, P, [CUE, a, b])) continue
+        const call: Call | null = game.discipline === "8-ball" ? { ball: b, pocket: pk.id } : null
+        for (const V0 of [2.2, 3.4]) {
+          const strike = (ph: number): CueStrike => ({ V0, phi: ph, theta: 0, a: 0, b: 0 })
+          const sol = solveAim(phi, 1.2, (ph) => {
+            const p = game.preview(strike(ph), { call }, balls)
+            return { p, v: firstContactIs(p, a) ? pathMiss(p, b, P, pk.id) : null }
+          })
+          if (!sol) continue
+          out.push({
+            strike: strike(sol.phi),
+            call,
+            placement: null,
+            kind: "combo",
+            target: { ball: b, pocket: pk.id },
+            description: `the ${a}–${b} combination into the ${pocketText(pk.id)}`,
+            balls,
+            value: score(game, me, sol.p, level),
+          })
+        }
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * One-rail kicks: the cue ball off a rail to hit a legal ball, for when no
+ * direct path is open. The aim solves for a full hit (zero contact offset).
+ */
+export function kickCandidates(game: Game, me: Player, level: AiLevel, balls: ReadonlyMap<string, BallState>): Candidate[] {
+  const cue = balls.get(CUE)
+  if (!cue) return []
+  const C = xy(cue)
+  const out: Candidate[] = []
+  const call: Call | null = game.discipline === "8-ball" ? "safety" : null
+  for (const ball of targetsFor(game, game.state, me, balls)) {
+    const O = xy(balls.get(ball)!)
+    for (const [axis, c, railName] of railLines(game)) {
+      const Om = mirror(O, axis, c)
+      const t = (c - C[axis]) / (Om[axis] - C[axis])
+      if (!(t > 0 && t < 1)) continue
+      const phi = deg(Math.atan2(Om[1] - C[1], Om[0] - C[0]))
+      for (const V0 of [1.6, 2.8]) {
+        const strike = (ph: number): CueStrike => ({ V0, phi: ph, theta: 0, a: 0, b: 0 })
+        const sol = solveAim(phi, 2.5, (ph) => {
+          const p = game.preview(strike(ph), { call }, balls)
+          return { p, v: contactOffset(p, ball) ?? pathMiss(p, CUE, O) }
+        })
+        if (!sol) continue
+        out.push({
+          strike: strike(sol.phi),
+          call,
+          placement: null,
+          kind: "kick",
+          description: `a kick off the ${railName} at the ${ball}`,
+          balls,
+          value: score(game, me, sol.p, level),
+        })
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * Signed contact offset (m) when the cue ball's first contact is `ball`: the
+ * object ball's center relative to the cue ball's incoming path (positive to
+ * its left); 0 is a full hit. Null if `ball` wasn't hit first.
+ */
+function contactOffset(p: Preview, ball: string): number | null {
+  if (!firstContactIs(p, ball)) return null
+  const e = p.result.events.find((x) => x.type === "ball_ball" && x.ids.includes(CUE) && x.ids.includes(ball))
+  const cueTraj = p.trajectories.balls.find((b) => b.id === CUE)
+  if (!e || !cueTraj) return null
+  const before = { ...cueTraj, segments: cueTraj.segments.filter((s) => s.t0 < e.time) }
+  if (before.segments.length === 0) return null
+  const v = stateAtTime(before, e.time).v
+  const n = Math.hypot(v[0], v[1])
+  if (n === 0) return null
+  const C = e.states[CUE]!.r
+  const O = e.states[ball]!.r
+  return (v[0] * (O[1] - C[1]) - v[1] * (O[0] - C[0])) / n
+}
+
+/**
+ * 9-ball push outs (5.4). The opponent then chooses who shoots, so a push is
+ * worth most when the next shot is a coin flip for whoever takes it:
+ * value −POSITION·|2E − 1|, where E is that shot's ease.
+ */
+export function pushCandidates(game: Game, balls: ReadonlyMap<string, BallState>): Candidate[] {
+  const out: Candidate[] = []
+  for (let d = 0; d < 360; d += 10) {
+    for (const V0 of [0.6, 1.1]) {
+      const strike: CueStrike = { V0, phi: d, theta: 0, a: 0, b: 0 }
+      const p = game.preview(strike, { pushOut: true }, balls)
+      let value: number
+      if (p.ruling.fouls.length > 0) value = FOUL
+      else {
+        const st = { ...p.ruling.state, pending: null }
+        value = -POSITION * Math.abs(2 * bestEase(game, st, st.shooter, p.after) - 1)
+      }
+      out.push({ strike, call: null, placement: null, kind: "push", pushOut: true, description: "a push out", balls, value })
     }
   }
   return out
@@ -319,7 +663,7 @@ function breakPlan(game: Game, level: AiLevel): AiPlan {
   const objs = [...game.balls].filter(([id]) => id !== CUE)
   const apex = objs.reduce((m, b) => (b[1].r[1] < m[1].r[1] ? b : m))[1]
   const phi = deg(Math.atan2(apex.r[1] - placement[1], apex.r[0] - placement[0]))
-  return { strike: { V0: level.breakSpeed, phi, theta: 0, a: 0, b: -0.15 }, call: null, placement, kind: "break", value: 0 }
+  return { strike: { V0: level.breakSpeed, phi, theta: 0, a: 0, b: -0.15 }, call: null, placement, kind: "break", pushOut: false, value: 0, description: "the break" }
 }
 
 /** Plan the next shot for the current shooter. Deterministic given the rng state. */
@@ -328,6 +672,7 @@ export function planShot(game: Game, level: AiLevel, rng: Rng): AiPlan {
   if (s.winner !== null || s.pending) throw new Error("no shot to plan")
   if (s.isBreak) return breakPlan(game, level)
   const me = s.shooter
+  const top = (cs: Candidate[]) => cs.reduce((m, c) => Math.max(m, c.value), -Infinity)
 
   let cands: Candidate[] = []
   if (s.cueBallInHand !== "none") {
@@ -339,7 +684,22 @@ export function planShot(game: Game, level: AiLevel, rng: Rng): AiPlan {
     const cue = game.balls.get(CUE)
     if (cue && !game.placementProblem(xy(cue))) cands.push(...safetyCandidates(game, me, level, game.balls, xy(cue)))
   } else {
-    cands = [...potCandidates(game, me, level, game.balls, null), ...safetyCandidates(game, me, level, game.balls, null)]
+    const pots = potCandidates(game, me, level, game.balls, null)
+    cands = [...pots, ...safetyCandidates(game, me, level, game.balls, null)]
+    // A combination on the 9 wins the rack: always look for one.
+    if (game.discipline === "9-ball" && game.balls.has("9")) cands.push(...comboCandidates(game, me, level, game.balls, "9"))
+    // No makeable direct pot: try banks and combinations.
+    if (top(pots) < CONTINUE) {
+      cands.push(...bankCandidates(game, me, level, game.balls))
+      if (game.discipline === "8-ball") cands.push(...comboCandidates(game, me, level, game.balls))
+    }
+    // Every option fouls or leaves a disaster (e.g. snookered): try kicks.
+    if (top(cands) < PASS) cands.push(...kickCandidates(game, me, level, game.balls))
+  }
+  // 9-ball: push out instead, if nothing beats a coin-flip position.
+  if (s.pushOutAvailable) {
+    const push = pushCandidates(game, game.balls)
+    if (top(push) > top(cands)) cands.push(...push)
   }
   if (cands.length === 0) {
     // Nothing found (e.g. nowhere legal to place): hit the first legal ball softly.
@@ -347,20 +707,30 @@ export function planShot(game: Game, level: AiLevel, rng: Rng): AiPlan {
     const c = game.balls.get(CUE)!
     const o = t ? game.balls.get(t)! : c
     const phi = deg(Math.atan2(o.r[1] - c.r[1], o.r[0] - c.r[0]))
-    return { strike: { V0: 2, phi, theta: 0, a: 0, b: 0 }, call: game.discipline === "8-ball" ? "safety" : null, placement: null, kind: "safety", value: 0 }
+    return {
+      strike: { V0: 2, phi, theta: 0, a: 0, b: 0 },
+      call: game.discipline === "8-ball" ? "safety" : null,
+      placement: null,
+      kind: "safety",
+      pushOut: false,
+      value: 0,
+      description: "a safety",
+    }
   }
 
   cands.sort((p, q) => q.value - p.value)
   let best = cands[0]!
   if (level.finalists > 0 && level.robustSamples > 0) {
     // Finalists: the best pots and the best safeties, re-run under our own noise.
-    const pots = cands.filter((c) => c.kind === "pot").slice(0, level.finalists)
+    const pots = cands.filter((c) => c.kind !== "safety" && c.kind !== "push").slice(0, level.finalists)
     const safeties = cands.filter((c) => c.kind === "safety").slice(0, Math.ceil(level.finalists / 2))
     let bestMean = -Infinity
-    for (const c of [...pots, ...safeties]) {
+    const pushes = cands.filter((c) => c.kind === "push").slice(0, 2)
+    for (const c of [...pots, ...safeties, ...pushes]) {
       let sum = 0
       for (let i = 0; i < level.robustSamples; i++) {
-        sum += score(game, me, game.preview(executionNoise(c.strike, level, rng), { call: c.call }, c.balls), level)
+        const p = game.preview(executionNoise(c.strike, level, rng), { call: c.call, pushOut: c.pushOut ?? false }, c.balls)
+        sum += c.pushOut ? (p.ruling.fouls.length > 0 ? FOUL : c.value) : score(game, me, p, level)
       }
       const mean = sum / level.robustSamples
       if (mean > bestMean) {
@@ -369,7 +739,16 @@ export function planShot(game: Game, level: AiLevel, rng: Rng): AiPlan {
       }
     }
   }
-  return { strike: best.strike, call: best.call, placement: best.placement, kind: best.kind, value: best.value, ...(best.target ? { target: best.target } : {}) }
+  return {
+    strike: best.strike,
+    call: best.call,
+    placement: best.placement,
+    kind: best.kind,
+    pushOut: best.pushOut ?? false,
+    value: best.value,
+    description: best.description,
+    ...(best.target ? { target: best.target } : {}),
+  }
 }
 
 /** Resolve a pending decision for the AI. */

@@ -132,7 +132,7 @@ Because the game is free and self-hosted, the licenses of the things we use set 
   - Safeties, ball-in-hand placement, break routines and the WPA choices (push-out replies, three-ball rule, illegal break).
   - Levels differ in execution noise (aim, speed, tip) and in how much they check shots for robustness.
   - ✅ The search runs in a Web Worker (`src/play/ai-worker.ts`, using a `Game.snapshot()`), so the page never stalls while the computer thinks.
-  - Still to do: kicks, banks, combinations, intentional push outs.
+  - ✅ Banks, combinations (always the 9 at 9-ball), kicks out of snookers, and 9-ball push outs. Their aim is solved in the simulation by root-finding a signed miss. The computer announces each shot in the HUD.
 
 ### Phase 3: Accuracy beyond the references
 - **3D:** airborne balls, jump shots, landings, balls hopping the rail.
