@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // The physics sources are compiled as part of this project and opt out
+    // of this check for their numeric hot paths (see packages/physics/tsconfig.json).
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["src", "test"]
+}

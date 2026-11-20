@@ -93,7 +93,7 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 ## Roadmap
 
 ### Phase 0: Foundations
-- ✅ Repo: pnpm workspace, TypeScript, Vitest, oxlint (`packages/physics`, `packages/web`). Still to do: `game` package and CI.
+- ✅ Repo: pnpm workspace, TypeScript, Vitest, oxlint (`packages/physics`, `packages/game`, `packages/web`). Still to do: CI.
 - ✅ MIT `LICENSE` (copyright gehsekky) and `THIRD_PARTY_NOTICES.md`.
 - ✅ Our own quadratic, cubic and quartic solvers, verified against exact roots. See physics-design.md, "Root solving".
 - ✅ Compared with NumPy `roots` (LAPACK): ours is more accurate on every test family, and NumPy loses all accuracy on 43% of wide-range cases. The Python reference environment lives in `tools/reference`.
@@ -106,12 +106,12 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 - ✅ Pockets: pooltool's simple "canonical" model.
 - ✅ **Exit criterion met (2026-11-19):** all 279 pooltool fixture shots reproduce the same event sequence. Outside the breaks, times agree within 1e-9 s; every shot's final positions agree within 0.52 µm. See physics-design.md, "Validation strategy".
 - ✅ **Performance, first pass.** Typical shots take 0.03–0.11 ms (9,000–36,000 shots/s, against a design goal of under 1 ms), and breaks take 1.7 ms (580/s), 11× faster than before. Results are unchanged. Remaining ideas are in physics-design.md, "Performance plan".
-- ✅ **Table builder** (`TableSpec` → rails, jaws, pockets). It reproduces pooltool's geometry bit for bit. Still to do: a cited WPA 9-ft preset.
+- ✅ **Table builder** (`TableSpec` → rails, jaws, pockets). It reproduces pooltool's geometry bit for bit. ✅ WPA 9-ft preset from the WPA equipment specifications (the game's default table).
 - ✅ **2D debug view** (`packages/web`, `pnpm --filter @pixelpoolhall/web dev`). It replays any fixture shot through our engine and shows paths, color-coded event markers, a scrubbable timeline, editable strike parameters, and pooltool's event positions as rings. Deep links: `#category/shot@time`.
 
 ### Phase 2: Playable game
 - A Three.js table, aiming UI, and controls for spin, elevation and power.
-- 8-ball and 9-ball rules (WPA): fouls, ball in hand, calling the shot, the break.
+- ✅ **8-ball and 9-ball rules** (`packages/game`), from the WPA Rules of Play and Regulations effective 2026-10-21. Covers the break and its options, open table and groups, called shots and safeties, push out, the three-ball break rule, three consecutive fouls, spotting, and cue ball in hand (including the head-string restrictions). It also includes WPA racks and a `Game` session that runs shots through the physics and applies each ruling. See [rules.md](rules.md).
 - Computer opponent using shot search, with difficulty levels.
 
 ### Phase 3: Accuracy beyond the references

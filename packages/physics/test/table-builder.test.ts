@@ -4,7 +4,7 @@
  * match the fixtures.
  */
 import { describe, expect, it } from "vitest"
-import { buildPocketTable, POOLTOOL_7FT, type TableSpec } from "../src/table-builder.ts"
+import { buildPocketTable, POOLTOOL_7FT, WPA_9FT, type TableSpec } from "../src/table-builder.ts"
 import { toTable } from "./support/fixture-convert.ts"
 import { loadFixtures } from "./support/pooltool-fixtures.ts"
 
@@ -41,5 +41,34 @@ describe("table builder", () => {
     expect(byId(built.linear)).toEqual(byId(ref.linear))
     expect(byId(built.circular)).toEqual(byId(ref.circular))
     expect(byId(built.pockets)).toEqual(byId(ref.pockets))
+  })
+})
+
+describe("WPA 9-ft preset", () => {
+  const t = buildPocketTable(WPA_9FT)
+  const get = (id: string) => t.linear.find((c) => c.id === id)!
+  /** Interior angle (degrees) at the lip between a rail's nose and a facing. */
+  const lipAngle = (railDir: [number, number], facingId: string) => {
+    const f = get(facingId)
+    // Facing direction pointing away from the playing surface (from its jaw end to its far end).
+    const d: [number, number] = [f.p1[0] - f.p2[0], f.p1[1] - f.p2[1]]
+    const cos = (railDir[0] * d[0] + railDir[1] * d[1]) / Math.hypot(...railDir) / Math.hypot(...d)
+    return (Math.acos(cos) * 180) / Math.PI
+  }
+
+  it("has the WPA playing surface and pocket mouths", () => {
+    expect(WPA_9FT.l).toBeCloseTo(2.54, 12)
+    expect(WPA_9FT.w).toBeCloseTo(1.27, 12)
+    expect(WPA_9FT.cornerPocketWidth / 0.0254).toBeGreaterThanOrEqual(4.5)
+    expect(WPA_9FT.cornerPocketWidth / 0.0254).toBeLessThanOrEqual(4.625)
+    expect(WPA_9FT.sidePocketWidth / 0.0254).toBeGreaterThanOrEqual(5)
+    expect(WPA_9FT.sidePocketWidth / 0.0254).toBeLessThanOrEqual(5.125)
+  })
+
+  it("builds facing cut angles within the WPA tolerance (142° corner, 104° side, ±1°)", () => {
+    // Corner facing 1 meets the head rail (18, along +x) at the lip.
+    expect(Math.abs(lipAngle([1, 0], "1") - 142)).toBeLessThan(1e-9)
+    // Side facing 4 meets long rail 3 (running toward −y from the lip).
+    expect(Math.abs(lipAngle([0, -1], "4") - 104)).toBeLessThan(1)
   })
 })

@@ -208,7 +208,15 @@ This follows pooltool's layout approach, re-implemented in TypeScript with Apach
 - `buildPocketTable(spec)` is a port of pooltool's pocket-table layout: 18 rail segments, 12 jaws and 6 pockets, with pooltool's ids.
 - From pooltool's default specs (`POOLTOOL_7FT`), it reproduces pooltool's geometry **bit for bit**.
 - The engine comparison now runs on the built table, with identical results.
-- **To do: a WPA 9-ft preset.** The 2.54 × 1.27 m playing surface is standard, but pocket mouth widths, facing angles, jaw radii and setbacks need a cited source (WPA equipment specs; measured tables) before they go in. The shelf and drop-edge parameters come with the Phase 3 pocket model.
+- **WPA 9-ft preset (`WPA_9FT`, the game's default table).** It's taken from the WPA Recommended Equipment Specifications (Nov 2001), using each range's midpoint:
+  - 100 × 50 in playing surface;
+  - corner mouth 4.5625 in, side mouth 5.0625 in (lip to lip);
+  - cushion 1.9375 in wide, nose at 63.5% of the ball diameter;
+  - facing cut angles 142° (corner) and 104° (side).
+
+  In this geometry the corner cut angle is 135° + `cornerPocketAngle` exactly, so 7°. The side angle is 90° + `sidePocketAngle`, so 14°. pooltool's side facing ends a cushion width behind the nose rather than on the facing line, so the built side angle is 103.6°, inside WPA's ±1°. A test checks both.
+
+  The WPA doesn't specify the jaw rounding, nose radius or pocket capture circles. Those keep pooltool's values until the Phase 3 pocket model, which also brings the shelf (corner 1–2¼ in, side 0–⅜ in) and the 12–15° back draft.
 
 ### Pockets (Phase 3 interior model)
 

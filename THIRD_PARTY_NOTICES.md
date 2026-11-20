@@ -43,3 +43,12 @@ Before adding anything here, check the licensing policy in
 - W. J. Stronge, "Impact Mechanics" (2nd ed., 2018): compliant contact model.
 - D. Alciatore, technical proofs A-5, A-6, A-14, A-30, A-31: ball–ball
   friction/throw, cue strike, squirt.
+
+## Rules and specifications (implemented from their substance, no text copied)
+
+- World Pool-Billiard Association, "Rules of Play" and "Regulations", effective
+  2026-10-21 (https://wpapool.com/rules-of-play/): the 8-ball and 9-ball rules in
+  `packages/game`. The rules are paraphrased and cited by rule number; the WPA
+  text is not reproduced.
+- WPA "Recommended Equipment Specifications" (effective November 2001): the
+  `WPA_9FT` table preset in `packages/physics/src/table-builder.ts`.

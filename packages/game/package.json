@@ -1,0 +1,19 @@
+{
+  "name": "@pixelpoolhall/game",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Pool game logic: WPA 8-ball and 9-ball rules, racks, spotting and match flow.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@pixelpoolhall/physics": "workspace:*"
+  }
+}

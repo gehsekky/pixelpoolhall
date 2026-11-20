@@ -53,6 +53,42 @@ export const POOLTOOL_7FT: Readonly<TableSpec> = {
   sideJawRadius: 0.00795,
 }
 
+const INCH = 0.0254
+
+/**
+ * WPA tournament 9-ft table, from the WPA Recommended Equipment
+ * Specifications (effective November 2001), using each range's midpoint:
+ * - playing surface 100 × 50 in, measured from cushion nose to nose (§5);
+ * - cushion 1⅞–2 in wide (§7); nose height 63.5% of the ball diameter (§7);
+ * - corner mouth 4.5–4.625 in and side mouth 5–5.125 in, lip to lip (§9);
+ * - facing cut angle 142° at the corners and 104° at the sides (§9). In this
+ *   geometry the interior angle between nose and facing is 135° + corner
+ *   angle at the corners, so 7°. At the sides it is 90° + side angle, so 14°.
+ *   The side facing runs from the jaw to a point a cushion width behind the
+ *   nose, not exactly through the lip, so the built side angle is 103.6°. That
+ *   is still inside the ±1° tolerance.
+ * The WPA doesn't specify the jaw rounding, the nose radius or the
+ * pocket capture circles; those keep pooltool's values until the Phase 3
+ * pocket model replaces them.
+ */
+export const WPA_9FT: Readonly<TableSpec> = {
+  l: 100 * INCH,
+  w: 50 * INCH,
+  cushionWidth: 1.9375 * INCH,
+  cushionHeight: 0.635 * 2.25 * INCH,
+  cushionNoseRadius: POOLTOOL_7FT.cushionNoseRadius,
+  cornerPocketWidth: 4.5625 * INCH,
+  cornerPocketAngle: 7,
+  cornerPocketDepth: POOLTOOL_7FT.cornerPocketDepth,
+  cornerPocketRadius: POOLTOOL_7FT.cornerPocketRadius,
+  cornerJawRadius: POOLTOOL_7FT.cornerJawRadius,
+  sidePocketWidth: 5.0625 * INCH,
+  sidePocketAngle: 14,
+  sidePocketDepth: POOLTOOL_7FT.sidePocketDepth,
+  sidePocketRadius: POOLTOOL_7FT.sidePocketRadius,
+  sideJawRadius: POOLTOOL_7FT.sideJawRadius,
+}
+
 /** Pocket depth below the slate where captured balls are placed (pooltool's default). */
 const POCKET_DEPTH = 0.08
 
