@@ -15,7 +15,24 @@
  *   - G toggles the aim guide;
  *   - Space skips the replay.
  */
-import { CUE, FOUL_TEXT, Game, legalTargets, type Call, type Discipline, type Option, type ShotRecord } from "@pixelpoolhall/game"
+import {
+  AI_LEVELS,
+  chooseOption,
+  createRng,
+  CUE,
+  executionNoise,
+  FOUL_TEXT,
+  Game,
+  legalTargets,
+  planShot,
+  type AiPlan,
+  type Call,
+  type Discipline,
+  type Option,
+  type Player,
+  type ShotRecord,
+} from "@pixelpoolhall/game"
+import type { CueStrike } from "@pixelpoolhall/physics"
 import { stateAtTime } from "@pixelpoolhall/physics"
 import * as THREE from "three"
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
@@ -120,7 +137,89 @@ type Mode =
   | { kind: "stroke"; pull: number; V0: number; t: number; dur: number }
   | { kind: "place"; last: [number, number] }
   | { kind: "replay"; record: ShotRecord; t: number }
+  /** The computer's turn: thinking, then swinging the cue onto its line, then drawing back. */
+  | { kind: "ai"; phase: "think" | "aim" | "draw"; t: number; plan?: AiPlan; strike?: CueStrike; fromPhi?: number; pull?: number }
 let mode: Mode = { kind: "aim" }
+
+// ---------- Computer opponent ----------
+
+/** The computer plays as player 2. */
+const AI_PLAYER: Player = 1
+type Opponent = "human" | keyof typeof AI_LEVELS
+let opponent: Opponent = "medium"
+let aiRng = createRng(1)
+let aiDeciding = false
+
+/** Whoever must act now: the chooser of a pending decision, else the shooter. */
+const actor = (): Player => game.state.pending?.player ?? game.state.shooter
+const aiActs = () => opponent !== "human" && game.state.winner === null && actor() === AI_PLAYER
+const humanTurn = () => !aiActs()
+const playerName = (i: Player) => (opponent === "human" ? `Player ${i + 1}` : i === AI_PLAYER ? `Computer (${AI_LEVELS[opponent].name})` : "You")
+
+/** Cue draw-back that `speedFor` maps to V0. */
+const pullFor = (V0: number) => MAX_PULL * Math.sqrt(Math.min(1, Math.max(0, (V0 - 0.15) / (MAX_SPEED - 0.15))))
+
+function startAiTurn(): void {
+  if (game.state.pending) {
+    if (aiDeciding) return
+    aiDeciding = true
+    setTimeout(() => {
+      aiDeciding = false
+      if (!aiActs() || !game.state.pending || opponent === "human") return
+      const o = chooseOption(game, AI_LEVELS[opponent], aiRng)
+      const r = game.decide(o)
+      lastNotes = [`${playerName(AI_PLAYER)} chose: ${OPTION_TEXT[o]}.`, ...r.notes]
+      syncBalls()
+      updateHud()
+    }, 900)
+    return
+  }
+  mode = { kind: "ai", phase: "think", t: 0 }
+  updateHud()
+  // Let the HUD paint "thinking" before the (blocking) search.
+  setTimeout(() => {
+    if (mode.kind !== "ai" || opponent === "human") return
+    const level = AI_LEVELS[opponent]
+    const plan = planShot(game, level, aiRng)
+    if (plan.placement) {
+      game.placeCueBall(plan.placement)
+      syncBalls()
+    }
+    const strike = executionNoise(plan.strike, level, aiRng)
+    aim.theta = strike.theta
+    elevation.value = String(aim.theta)
+    setTip(strike.a, strike.b)
+    call = plan.call
+    callManual = true
+    mode = { kind: "ai", phase: "aim", t: 0, plan, strike, fromPhi: aim.phi, pull: 0 }
+    updateHud()
+  }, 60)
+}
+
+function advanceAi(m: Extract<Mode, { kind: "ai" }>, dt: number): void {
+  if (m.phase === "think" || !m.strike) return
+  m.t += dt
+  if (m.phase === "aim") {
+    const AIM_TIME = 0.9
+    const d = ((((m.strike.phi - m.fromPhi!) % 360) + 540) % 360) - 180
+    const f = Math.min(1, m.t / AIM_TIME)
+    aim.phi = m.fromPhi! + d * (f * f * (3 - 2 * f))
+    if (f >= 1) {
+      aim.phi = m.strike.phi
+      m.phase = "draw"
+      m.t = 0
+    }
+  } else {
+    const DRAW_TIME = 0.6
+    const target = pullFor(m.strike.V0)
+    m.pull = target * Math.min(1, m.t / DRAW_TIME)
+    updatePower()
+    if (m.t >= DRAW_TIME + 0.25) {
+      const V0 = m.strike.V0
+      mode = { kind: "stroke", pull: target, V0, t: 0, dur: Math.min(0.15, Math.max(0.04, (target + IDLE_GAP) / (V0 * 0.6))) }
+    }
+  }
+}
 
 const MAX_PULL = 0.3
 const MAX_SPEED = 9
@@ -128,7 +227,10 @@ const IDLE_GAP = 0.012
 const speedFor = (pull: number) => 0.15 + (MAX_SPEED - 0.15) * (pull / MAX_PULL) ** 2
 
 function newGame(discipline: Discipline): void {
-  game = new Game({ discipline, seed: (Math.random() * 2 ** 32) >>> 0, })
+  const seed = (Math.random() * 2 ** 32) >>> 0
+  game = new Game({ discipline, seed })
+  aiRng = createRng(seed ^ 0x5bd1e995)
+  opponent = $<HTMLSelectElement>("opponent").value as Opponent
   if (tableGroup) scene.remove(tableGroup)
   const t = buildTable(game.table, game.spec)
   tableGroup = t.group
@@ -231,7 +333,7 @@ canvas.addEventListener("pointerdown", (e) => {
     if (mode.kind === "draw") mode = { kind: "aim" }
     return
   }
-  if (e.button !== 0 || mode.kind !== "aim" || game.state.winner !== null || game.state.pending) return
+  if (e.button !== 0 || mode.kind !== "aim" || game.state.winner !== null || game.state.pending || !humanTurn()) return
   // Ball in hand: grab the cue ball.
   if (game.state.cueBallInHand !== "none") {
     pointerTo(e)
@@ -249,7 +351,7 @@ canvas.addEventListener("pointerdown", (e) => {
 
 canvas.addEventListener("pointermove", (e) => {
   if (rightDown) return
-  if (mode.kind === "aim" && !aimLocked) {
+  if (mode.kind === "aim" && !aimLocked && humanTurn()) {
     const p = onBallPlane(e)
     const c = game.balls.get(CUE)
     if (p && c && Math.hypot(p.x - c.r[0], p.y - c.r[1]) > 2 * game.params.R) {
@@ -306,6 +408,7 @@ canvas.addEventListener("contextmenu", (e) => e.preventDefault())
 
 addEventListener("keydown", (e) => {
   if ((e.target as HTMLElement).tagName === "SELECT" || (e.target as HTMLElement).tagName === "INPUT") return
+  if (!humanTurn() && e.key !== " " && !"123gG".includes(e.key)) return
   const step = e.shiftKey ? 1 : 0.1
   const tip = 0.05
   switch (e.key) {
@@ -449,7 +552,7 @@ const OPTION_TEXT: Record<Option, string> = {
 }
 
 function updatePower(): void {
-  const pull = mode.kind === "draw" || mode.kind === "stroke" ? mode.pull : 0
+  const pull = mode.kind === "draw" || mode.kind === "stroke" ? mode.pull : mode.kind === "ai" ? (mode.pull ?? 0) : 0
   powerBar.style.width = `${(100 * pull) / MAX_PULL}%`
   strikeText.textContent =
     `${pull > 0 ? speedFor(pull).toFixed(2) : "—"} m/s · ` +
@@ -458,15 +561,17 @@ function updatePower(): void {
 
 function updateHud(): void {
   const s = game.state
-  const p = (i: number) => `Player ${i + 1}`
+  const p = (i: number) => playerName(i as Player)
   const parts: string[] = [`${game.discipline} · ${p(0)} ${game.score[0]} – ${game.score[1]} ${p(1)}`]
   if (s.winner !== null) parts.push(`${p(s.winner)} wins the rack.`)
   else if (s.pending) parts.push(`${p(s.pending.player)} to choose.`)
+  else if (mode.kind === "ai" && mode.phase === "think") parts.push(`${p(s.shooter)} is thinking…`)
   else {
     let line = `${p(s.shooter)} to shoot`
     if (s.isBreak) line += " — break"
-    if (s.cueBallInHand === "kitchen") line += " · ball in hand above the head string (drag the cue ball)"
-    if (s.cueBallInHand === "table") line += " · ball in hand (drag the cue ball)"
+    const drag = humanTurn() ? " (drag the cue ball)" : ""
+    if (s.cueBallInHand === "kitchen") line += ` · ball in hand above the head string${drag}`
+    if (s.cueBallInHand === "table") line += ` · ball in hand${drag}`
     parts.push(line)
     if (game.discipline === "8-ball") {
       parts.push(s.groups ? `${p(0)}: ${s.groups[0]} · ${p(1)}: ${s.groups[1]}` : "Open table")
@@ -489,7 +594,7 @@ function updateHud(): void {
   notes.innerHTML = lastNotes.map((n) => `<li>${n}</li>`).join("")
 
   decisions.innerHTML = ""
-  if (s.pending && mode.kind !== "replay") {
+  if (s.pending && mode.kind !== "replay" && humanTurn()) {
     for (const o of s.pending.options) {
       const b = document.createElement("button")
       b.textContent = OPTION_TEXT[o]
@@ -512,8 +617,8 @@ function updateHud(): void {
     }
     decisions.append(b)
   }
-  callButtons.hidden = !needsCall() || mode.kind === "replay"
-  pushOutLabel.hidden = !(s.pushOutAvailable && !s.pending && s.winner === null)
+  callButtons.hidden = !needsCall() || mode.kind === "replay" || !humanTurn()
+  pushOutLabel.hidden = !(s.pushOutAvailable && !s.pending && s.winner === null && humanTurn())
   if (pushOutLabel.hidden) pushOut.checked = false
   updatePower()
 }
@@ -554,7 +659,7 @@ function updateCallMarkers(): void {
 
 function updateGuide(): void {
   const c = game.balls.get(CUE)
-  const visible = showGuide && !!c && (mode.kind === "aim" || mode.kind === "draw") && game.state.winner === null
+  const visible = showGuide && !!c && (mode.kind === "aim" || mode.kind === "draw") && game.state.winner === null && humanTurn()
   guideLine.visible = objLine.visible = ghost.visible = visible
   if (!visible || !c) return
   const R = game.params.R
@@ -622,11 +727,15 @@ function frame(now: number): void {
     if (f >= 1) shoot(mode.V0)
   } else if (mode.kind === "replay") {
     advanceReplay(mode, dt)
+  } else if (mode.kind === "ai") {
+    advanceAi(mode, dt)
+  } else if (mode.kind === "aim" && aiActs()) {
+    startAiTurn()
   }
 
-  cue.visible = mode.kind === "aim" || mode.kind === "draw" || mode.kind === "stroke"
+  cue.visible = mode.kind === "aim" || mode.kind === "draw" || mode.kind === "stroke" || (mode.kind === "ai" && mode.phase !== "think")
   if (cue.visible && cueBall && mode.kind !== "stroke") {
-    const pull = mode.kind === "draw" ? mode.pull : 0
+    const pull = mode.kind === "draw" ? mode.pull : mode.kind === "ai" ? (mode.pull ?? 0) : 0
     poseCue(cue, new THREE.Vector3(cueBall.r[0], cueBall.r[1], cueBall.r[2]), R, aim.phi, aim.theta, aim.a, aim.b, IDLE_GAP + pull)
   }
   if (game.state.pending || game.state.winner !== null) cue.visible = false

@@ -39,6 +39,15 @@ export interface ShotOptions {
   pushOut?: boolean
 }
 
+export interface Preview {
+  result: ShotResult
+  trajectories: Trajectories
+  facts: ShotFacts
+  ruling: Ruling
+  /** Balls left on the table, at rest, before any spotting or cue-ball placement. */
+  after: Map<string, BallState>
+}
+
 export interface ShotRecord {
   shooter: Player
   strike: CueStrike
@@ -88,9 +97,9 @@ export class Game {
   }
 
   /** Why the cue ball can't go at `p` now, or null if it can. */
-  placementProblem(p: Point): string | null {
+  placementProblem(p: Point, balls: ReadonlyMap<string, BallState> = this.balls): string | null {
     if (this.state.cueBallInHand === "none") return "the cue ball isn't in hand"
-    const others = [...this.balls].filter(([id]) => id !== CUE).map(([, s]) => [s.r[0], s.r[1]] as Point)
+    const others = [...balls].filter(([id]) => id !== CUE).map(([, s]) => [s.r[0], s.r[1]] as Point)
     return placementProblem(this.layout, p, others, this.state.cueBallInHand)
   }
 
@@ -98,6 +107,32 @@ export class Game {
     const problem = this.placementProblem(p)
     if (problem) throw new Error(`can't place the cue ball there: ${problem}`)
     this.balls.set(CUE, rest(p, this.params.R))
+  }
+
+  /**
+   * Simulate and judge a shot without changing the game. `balls` overrides
+   * the current positions (e.g. to try a ball-in-hand placement).
+   */
+  preview(strike: CueStrike, options: ShotOptions = {}, balls: ReadonlyMap<string, BallState> = this.balls): Preview {
+    const s = this.state
+    const shot = {
+      table: this.table,
+      balls: [...balls].map(([id, state]) => ({ id, params: this.params, state })),
+      cueBall: CUE,
+      strike,
+    }
+    const result = simulate(shot)
+    const traj = trajectories(shot, result)
+    const facts = shotFacts(result, traj, this.layout.headStringY)
+    const onTable = new Set([...balls.keys()].filter((id) => id !== CUE))
+    const ruling = judge(s, { facts, onTable, call: options.call ?? null, pushOut: options.pushOut ?? false })
+    // Positions after the shot: pocketed and off-table balls leave the table.
+    const after = new Map(
+      Object.entries(result.final)
+        .filter(([, st]) => st.s !== MotionState.pocketed && st.s !== MotionState.offTable)
+        .map(([id, st]) => [id, { ...st, v: [0, 0, 0], w: [0, 0, 0], s: MotionState.stationary }] as [string, BallState]),
+    )
+    return { result, trajectories: traj, facts, ruling, after }
   }
 
   shoot(strike: CueStrike, options: ShotOptions = {}): ShotRecord {
@@ -111,27 +146,20 @@ export class Game {
       if (problem) throw new Error(`illegal cue ball placement: ${problem}`)
     }
     const start = new Map(this.balls)
-    const onTable = this.objectBalls()
-    const shot = {
-      table: this.table,
-      balls: [...this.balls].map(([id, state]) => ({ id, params: this.params, state })),
-      cueBall: CUE,
+    const p = this.preview(strike, options)
+    const record: ShotRecord = {
+      shooter: s.shooter,
       strike,
+      options,
+      start,
+      result: p.result,
+      trajectories: p.trajectories,
+      facts: p.facts,
+      ruling: p.ruling,
     }
-    const result = simulate(shot)
-    const traj = trajectories(shot, result)
-    const facts = shotFacts(result, traj, this.layout.headStringY)
-    const ruling = judge(s, { facts, onTable, call: options.call ?? null, pushOut: options.pushOut ?? false })
-    const record: ShotRecord = { shooter: s.shooter, strike, options, start, result, trajectories: traj, facts, ruling }
     this.history.push(record)
-
-    // Positions after the shot: pocketed and off-table balls leave the table.
-    this.balls = new Map(
-      Object.entries(result.final)
-        .filter(([, st]) => st.s !== MotionState.pocketed && st.s !== MotionState.offTable)
-        .map(([id, st]) => [id, { ...st, v: [0, 0, 0], w: [0, 0, 0], s: MotionState.stationary }] as const),
-    )
-    this.apply(ruling)
+    this.balls = p.after
+    this.apply(p.ruling)
     return record
   }
 

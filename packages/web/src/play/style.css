@@ -42,7 +42,7 @@ body { font: 13px/1.4 system-ui, sans-serif; color: var(--hud-text); }
 .bottom-right { bottom: 16px; right: 16px; }
 .bottom-left { bottom: 16px; left: 16px; }
 
-.row { display: flex; gap: 8px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
 .status div:first-child { font-weight: 600; }
 .notes { margin: 0; padding-left: 1.2em; color: var(--hud-muted); max-height: 9em; overflow: auto; }
 .notes:empty { display: none; }
