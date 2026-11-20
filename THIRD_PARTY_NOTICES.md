@@ -13,6 +13,13 @@ Before adding anything here, check the licensing policy in
 
 None yet.
 
+## Reference data
+
+- `packages/physics/test/fixtures/pooltool/*.json`: simulation output generated
+  by running pooltool (https://github.com/ekiefl/pooltool, Apache-2.0, Copyright
+  Evan Kiefl) through `tools/reference/pooltool_fixtures.py`. Test data only. It
+  contains no pooltool code and is not shipped.
+
 ## Published works implemented from their mathematics (cited, no code copied)
 
 - Ferrari's method and Descartes' factorization for quartic equations, and

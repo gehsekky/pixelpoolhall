@@ -119,7 +119,7 @@ Detection and rendering both read these coefficients. Balls are **not** moved fo
   - **Measured speed:** 2.0–2.5 M solves/s on realistic families (Node 26). The fallback runs on < 1% of cases, except pathological coefficients spanning 20 orders of magnitude (24%, 1.0 M solves/s).
   - **Metric note:** backward error is measured relative to the size of each coefficient's terms. Measuring against the coefficient's own value isn't attainable: even correctly rounded exact roots score 85+ eps on it when a coefficient is small through cancellation (verified).
   - **Consequence for collision detection:** near-tangent contacts can legitimately come back as a complex pair with a tiny imaginary part. The detector must treat near-real roots as candidate contacts (`ε_contact` above).
-  - **Compared with NumPy 2.5.5 `roots`** (LAPACK companion-matrix eigenvalues via OpenBLAS), on the same 300 cases per family against the same exact roots (`packages/physics/test/numpy-comparison.ts`):
+  - **Compared with NumPy `roots`** (2.5.5; 2.3.5 noted where it differs) (LAPACK companion-matrix eigenvalues via OpenBLAS), on the same 300 cases per family against the same exact roots (`packages/physics/test/numpy-comparison.ts`):
 
     | Quartic family | Worst forward error, ours / NumPy (× eps·cond) | Worst backward error, ours / NumPy (eps) |
     |---|---|---|
@@ -129,12 +129,13 @@ Detection and rendering both read these coefficients. Balls are **not** moved fo
     | uniform coefficients | 1.4 / 9.7 | 2.6 / 24 |
     | wild coefficients | 1.6 / **5.6e13** | 2.1 / **1.1e14** |
     | close real pair | 2.0 / 14 | 4.0 / 46 |
-    | extreme scale | 2.2 / 11 | 2.9 / 23 |
+    | extreme scale | 2.2 / 11 (2.3.5: **4.5e15**) | 2.9 / 23 (2.3.5: **∞**) |
     | ball–ball collision | 0.5 / 2.4 | 2.3 / 29 |
 
     - Ours is more accurate on every family, by 4–5× at the median and by 10–100× in the worst case.
     - On wild coefficients NumPy loses all accuracy on 129 roots (43% of cases; the companion matrix can't represent roots spread over many orders of magnitude). It also gets one close-pair real-root count wrong. Ours has neither failure.
     - Cubic results are similar: our worst is ≤ 2.3 / ≤ 3.6 eps; NumPy's is 38 / 43 eps, and it loses 15 roots on wild coefficients.
+    - **NumPy version matters.** The reference venv now pins NumPy 2.3.5, because pooltool's numba caps it below 2.4. Rerun on 2.3.5, every family gives identical numbers, except extreme scale (roots near 1e±60): 2.3.5 fails completely there, losing 576 of 900 quartic roots and 468 cubic roots, with infinite backward error. 2.5.5 handles those cases, so `np.roots` or its bundled LAPACK/OpenBLAS changed in between.
   - **Still to do:** **polish every candidate root** with 1–3 Newton iterations on the original distance function.
 - **Reducing the degree:** when the leading coefficients are zero (two balls with the same acceleration, or a stationary ball against a rolling one), drop to the cubic or quadratic exactly rather than passing near-zero values to the quartic solver.
 - **Near-tangent (thin) contacts:** if the polished root's minimum distance is within `ε_contact` of `2R`, accept it as a contact even when the discriminant is slightly negative. This makes the thinnest cuts register reliably, which tailuge can miss entirely.
@@ -251,6 +252,14 @@ All parameters live in one typed registry. Each entry records its **value, unit,
      - event times within `1e-6 s`;
      - final positions within `0.1 mm` for shots with ≤ 5 events.
    - Divergence on long chaotic shots like the break is expected; those are compared statistically.
+   - **As built (2026-11-19):**
+     - 279 shots in 8 categories (motion, cushion, jaw, cut, pocket, frozen, break, random). See `tools/reference/README.md`.
+     - Every event records the post-event state of each ball involved, so failures can be pinned to a single event.
+     - The fixtures satisfy our invariant checks: energy never increases, motion-state kinematics hold, and every shot ends at rest with no overlaps.
+   - **pooltool conventions to account for when comparing:**
+     - Resolved contacts are left 1 µm apart (`MIN_DIST`). Our `MIN_GAP` is 1e-9 m, so post-contact positions differ by up to about 1 µm by design.
+     - Rails are nose cylinders at cushion height, with contact in 3D.
+     - Frozen or following balls "chatter" through hundreds of micro-collisions (1,218 events in one combination shot). Compare those shots by outcome.
 4. **Tests against measured data (Phase 3).**
    - Alciatore's published measurements: throw curves, squirt, cushion rebound angles.
    - Our own high-speed video, recorded where possible.

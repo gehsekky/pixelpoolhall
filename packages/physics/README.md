@@ -42,3 +42,15 @@ DEGREE=3 node test/accuracy-report.ts 300   # cubic
 node test/speed-report.ts          # throughput and fallback rate per family
 node test/numpy-comparison.ts 300  # side by side with numpy.roots (needs tools/reference venv)
 ```
+
+## Reference fixtures
+
+`test/fixtures/pooltool/` holds pooltool simulations exported by
+`tools/reference/pooltool_fixtures.py` (see `tools/reference/README.md`).
+`test/pooltool-fixtures.test.ts` checks them now. Phase 1 will replay them
+through our engine.
+
+```sh
+# regenerate (from the repo root)
+tools/reference/.venv/bin/python -I tools/reference/pooltool_fixtures.py
+```

@@ -1,0 +1,7 @@
+# Top-level reference dependencies. Regenerate the lock with:
+#   uv pip compile requirements.in -o requirements.txt --python-version 3.13 \
+#     --index-strategy unsafe-best-match --extra-index-url https://archive.panda3d.org/simple/
+# pooltool is pinned to a commit; it pins its own panda3d dev build, which is
+# only on the panda3d archive index. numba (via pooltool) caps numpy < 2.4.
+pooltool-billiards @ git+https://github.com/ekiefl/pooltool@9e819eb
+numpy
