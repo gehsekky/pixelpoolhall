@@ -39,6 +39,15 @@ export interface ShotOptions {
   pushOut?: boolean
 }
 
+export interface GameSnapshot {
+  discipline: Discipline
+  spec: TableSpec
+  params: BallParams
+  state: GameState
+  balls: [string, BallState][]
+  score: [number, number]
+}
+
 export interface Preview {
   result: ShotResult
   trajectories: Trajectories
@@ -89,6 +98,31 @@ export class Game {
     this.rng = createRng(opts.seed ?? 1)
     this.state = newRack(this.discipline, opts.firstBreaker ?? 0, opts.rules)
     this.rack()
+  }
+
+  /**
+   * Plain-data copy of the position and rules state (structured-cloneable,
+   * JSON-safe), e.g. to hand to a Web Worker. History and the rack RNG are
+   * not included.
+   */
+  snapshot(): GameSnapshot {
+    return {
+      discipline: this.discipline,
+      spec: { ...this.spec },
+      params: { ...this.params },
+      state: structuredClone(this.state),
+      balls: [...this.balls].map(([id, b]) => [id, structuredClone(b)]),
+      score: [...this.score],
+    }
+  }
+
+  /** A game at a snapshot's position. */
+  static fromSnapshot(snap: GameSnapshot): Game {
+    const g = new Game({ discipline: snap.discipline, table: snap.spec, ballParams: snap.params, rules: snap.state.rules })
+    g.state = structuredClone(snap.state)
+    g.balls = new Map(snap.balls.map(([id, b]) => [id, structuredClone(b)]))
+    g.score = [...snap.score]
+    return g
   }
 
   /** Object balls on the table. */

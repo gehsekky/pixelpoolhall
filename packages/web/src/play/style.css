@@ -65,11 +65,46 @@ select option { color: #1b1d21; }
 .stroke { display: flex; flex-direction: column; gap: 8px; width: 200px; }
 .tip { display: flex; gap: 10px; align-items: center; }
 #spin { width: 96px; height: 96px; cursor: crosshair; touch-action: none; }
-.elev { display: flex; flex-direction: column; gap: 4px; color: var(--hud-muted); }
+.elev { display: flex; flex-direction: column; gap: 6px; color: var(--hud-muted); }
+.elev label { display: flex; flex-direction: column; gap: 4px; }
 .elev input { width: 90px; }
+.elev button { padding: 2px 8px; }
 .power { height: 8px; border-radius: 4px; background: var(--hud-border); overflow: hidden; }
 #power-bar { height: 100%; width: 0; background: var(--power); }
 .strike { color: var(--hud-muted); font-variant-numeric: tabular-nums; }
+
+.stroke-pad {
+  right: 16px;
+  top: 50%;
+  transform: translateY(-60%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+}
+.fine { display: flex; gap: 6px; }
+.fine button { width: 40px; height: 36px; padding: 0; touch-action: none; user-select: none; }
+.pad {
+  position: relative;
+  width: 56px;
+  height: min(34vh, 260px);
+  border-radius: 28px;
+  background: var(--hud-border);
+  touch-action: none;
+  cursor: ns-resize;
+}
+.knob {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--accent);
+  pointer-events: none;
+}
+.pad-label { color: var(--hud-muted); font-size: 12px; }
 
 .help summary { cursor: pointer; font-weight: 600; }
 .help ul { margin: 6px 0 0; padding-left: 1.2em; color: var(--hud-muted); }
@@ -78,5 +113,17 @@ select option { color: #1b1d21; }
 
 @media (max-width: 640px) {
   .help { display: none; }
-  .top-left { right: 16px; }
+  .top-left { top: 10px; left: 10px; right: 92px; padding: 8px; gap: 6px; font-size: 12px; }
+  .top-left select, .top-left button { padding: 2px 6px; font-size: 12px; }
+  .notes { max-height: 3em; }
+  .bottom-right { right: 10px; bottom: 10px; padding: 8px; }
+  .stroke { width: 156px; gap: 6px; }
+  .tip { gap: 8px; }
+  #spin { width: 72px; height: 72px; }
+  .elev input { width: 66px; }
+  .elev button { padding: 2px 6px; font-size: 11px; }
+  .stroke-pad { right: 10px; top: auto; bottom: 190px; transform: none; padding: 6px; }
+  .fine button { width: 34px; height: 32px; }
+  .pad { width: 48px; height: 22vh; }
+  .knob { width: 36px; height: 36px; }
 }

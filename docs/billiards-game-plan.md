@@ -119,14 +119,20 @@ Because the game is free and self-hosted, the licenses of the things we use set 
   - Rulings and pending choices shown in the HUD.
   - The 2D debug view moved to `debug.html`.
   - ✅ Call-shot picker: the call follows the aim guide, or you click a ball and a pocket; there's also a safety call. 8-ball plays with WPA called shots.
-  - Still to do: a room background, touch controls.
+  - ✅ Touch controls:
+    - one finger aims, and a tap calls a ball or pocket (or aims at the tapped spot);
+    - a pull-down stroke pad shoots, and hold-to-repeat buttons do fine aim;
+    - two fingers orbit and pinch-zoom; ball in hand drags with a wider touch target.
+    - The camera fits portrait screens, and the HUD has a compact phone layout.
+  - Still to do: a room background.
 - ✅ **8-ball and 9-ball rules** (`packages/game`), from the WPA Rules of Play and Regulations effective 2026-10-21. Covers the break and its options, open table and groups, called shots and safeties, push out, the three-ball break rule, three consecutive fouls, spotting, and cue ball in hand (including the head-string restrictions). It also includes WPA racks and a `Game` session that runs shots through the physics and applies each ruling. See [rules.md](rules.md).
 - ✅ **Computer opponent** (`packages/game/src/ai.ts`), playing in the 3D view at Easy, Medium or Hard. See [ai.md](ai.md).
   - Shot search over the real physics and the WPA referee.
   - Aims corrected for throw and squirt, measured in the simulation.
   - Safeties, ball-in-hand placement, break routines and the WPA choices (push-out replies, three-ball rule, illegal break).
   - Levels differ in execution noise (aim, speed, tip) and in how much they check shots for robustness.
-  - Still to do: kicks, banks, combinations, intentional push outs, a Web Worker for the search.
+  - ✅ The search runs in a Web Worker (`src/play/ai-worker.ts`, using a `Game.snapshot()`), so the page never stalls while the computer thinks.
+  - Still to do: kicks, banks, combinations, intentional push outs.
 
 ### Phase 3: Accuracy beyond the references
 - **3D:** airborne balls, jump shots, landings, balls hopping the rail.

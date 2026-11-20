@@ -115,4 +115,18 @@ describe("game session", () => {
     expect(g.state.breaker).toBe(1)
     expect(g.balls.size).toBe(10)
   })
+
+  it("round-trips through a snapshot, and plays identically from it", () => {
+    const g = new Game({ discipline: "8-ball", seed: 21 })
+    const strike = { V0: 8, phi: aim(g.balls.get(CUE)!, g.layout.footSpot), theta: 0, a: 0, b: 0 }
+    g.shoot(strike)
+    const snap = JSON.parse(JSON.stringify(g.snapshot()))
+    const copy = Game.fromSnapshot(snap)
+    expect(copy.state).toEqual(g.state)
+    expect([...copy.balls]).toEqual([...g.balls])
+    if (g.state.pending || g.state.winner !== null) return
+    if (g.state.cueBallInHand !== "none") return
+    const next = { V0: 2, phi: 30, theta: 0, a: 0, b: 0.2 }
+    expect(copy.preview(next).after).toEqual(g.preview(next).after)
+  })
 })

@@ -37,11 +37,25 @@
       <div class="stroke">
         <div class="tip">
           <canvas id="spin" width="96" height="96" title="Cue tip position (double-click to center)"></canvas>
-          <label class="elev">Elevation <input id="elevation" type="range" min="0" max="30" step="1" value="0" /></label>
+          <div class="elev">
+            <label>Elevation <input id="elevation" type="range" min="0" max="30" step="1" value="0" /></label>
+            <button id="tip-center" type="button">Center tip</button>
+          </div>
         </div>
         <div class="power"><div id="power-bar"></div></div>
         <div id="strike" class="strike"></div>
       </div>
+    </section>
+
+    <section class="hud stroke-pad" aria-label="Stroke">
+      <div class="fine">
+        <button id="fine-left" type="button" aria-label="Fine aim left">◀</button>
+        <button id="fine-right" type="button" aria-label="Fine aim right">▶</button>
+      </div>
+      <div id="pad" class="pad" title="Pull down to draw the cue back; release to shoot">
+        <div id="pad-knob" class="knob"></div>
+      </div>
+      <div class="pad-label">Pull to shoot</div>
     </section>
 
     <details class="hud bottom-left help">
@@ -52,6 +66,7 @@
         <li>Hold the left button and drag toward you to draw the cue; release to shoot</li>
         <li>Right-drag: orbit · Wheel: zoom · Middle-drag: pan</li>
         <li>Ball in hand: drag the cue ball</li>
+        <li>Touch: drag a finger to aim, tap a ball/pocket to call, pull the pad down and release to shoot; two fingers orbit and zoom</li>
         <li>←/→ fine aim (Shift ×10) · W/A/S/D tip · R/F elevation</li>
         <li>1/2/3 views · G aim guide · Space skip replay · Esc cancel</li>
       </ul>

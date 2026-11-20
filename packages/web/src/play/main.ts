@@ -17,14 +17,12 @@
  */
 import {
   AI_LEVELS,
-  chooseOption,
   createRng,
   CUE,
   executionNoise,
   FOUL_TEXT,
   Game,
   legalTargets,
-  planShot,
   type AiPlan,
   type Call,
   type Discipline,
@@ -37,6 +35,7 @@ import { stateAtTime } from "@pixelpoolhall/physics"
 import * as THREE from "three"
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js"
+import type { AiRequest, AiResponse } from "./ai-worker.ts"
 import { createBall, spin } from "./balls3d.ts"
 import { POCKET_NAMES, pocketToward } from "./calls.ts"
 import { createCue, poseCue } from "./cue3d.ts"
@@ -61,6 +60,8 @@ const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 50)
 camera.up.set(0, 0, 1)
 const controls = new OrbitControls(camera, canvas)
 controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE }
+// One finger is ours (aiming, placing); two fingers orbit and pinch-zoom.
+controls.touches = { ONE: null, TWO: THREE.TOUCH.DOLLY_ROTATE }
 controls.enableDamping = true
 controls.maxPolarAngle = Math.PI / 2 - 0.05
 controls.minDistance = 0.3
@@ -133,7 +134,10 @@ const callComplete = () => call === "safety" || (call !== null && call.ball !== 
 
 type Mode =
   | { kind: "aim" }
-  | { kind: "draw"; startY: number; startX: number; pull: number }
+  /** Drawing the cue back: by mouse drag on the table, or on the stroke pad (`scale` = metres of pull per pixel). */
+  | { kind: "draw"; startY: number; startX: number; pull: number; scale: number }
+  /** Touch: one finger on the table, aiming at it. */
+  | { kind: "touchAim"; startX: number; startY: number; phiBefore: number; moved: boolean }
   | { kind: "stroke"; pull: number; V0: number; t: number; dur: number }
   | { kind: "place"; last: [number, number] }
   | { kind: "replay"; record: ShotRecord; t: number }
@@ -159,33 +163,58 @@ const playerName = (i: Player) => (opponent === "human" ? `Player ${i + 1}` : i 
 /** Cue draw-back that `speedFor` maps to V0. */
 const pullFor = (V0: number) => MAX_PULL * Math.sqrt(Math.min(1, Math.max(0, (V0 - 0.15) / (MAX_SPEED - 0.15))))
 
+// The search runs in a Web Worker. Each request carries the game generation,
+// so answers that arrive after a new game or rack has started are dropped.
+const aiWorker = new Worker(new URL("./ai-worker.ts", import.meta.url), { type: "module" })
+let aiRequestId = 0
+let generation = 0
+const aiPending = new Map<number, (r: AiResponse) => void>()
+aiWorker.onmessage = (e: MessageEvent<AiResponse>) => {
+  const done = aiPending.get(e.data.id)
+  aiPending.delete(e.data.id)
+  done?.(e.data)
+}
+
+function askAi(kind: AiRequest["kind"]): Promise<AiResponse> {
+  const id = ++aiRequestId
+  const req: AiRequest = { id, kind, snapshot: game.snapshot(), level: opponent as keyof typeof AI_LEVELS, seed: (aiRng.next() * 2 ** 32) >>> 0 }
+  return new Promise((resolve) => {
+    aiPending.set(id, resolve)
+    aiWorker.postMessage(req)
+  })
+}
+
+/** Minimum visible thinking time, so the computer doesn't act instantly. */
+const MIN_THINK_MS = 500
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
 function startAiTurn(): void {
+  const gen = generation
   if (game.state.pending) {
     if (aiDeciding) return
     aiDeciding = true
-    setTimeout(() => {
+    void Promise.all([askAi("decide"), delay(900)]).then(([res]) => {
       aiDeciding = false
-      if (!aiActs() || !game.state.pending || opponent === "human") return
-      const o = chooseOption(game, AI_LEVELS[opponent], aiRng)
-      const r = game.decide(o)
-      lastNotes = [`${playerName(AI_PLAYER)} chose: ${OPTION_TEXT[o]}.`, ...r.notes]
+      if (gen !== generation || !aiActs() || !game.state.pending) return
+      if (!res.option) throw new Error(`computer decision failed: ${res.error}`)
+      const r = game.decide(res.option)
+      lastNotes = [`${playerName(AI_PLAYER)} chose: ${OPTION_TEXT[res.option]}.`, ...r.notes]
       syncBalls()
       updateHud()
-    }, 900)
+    })
     return
   }
   mode = { kind: "ai", phase: "think", t: 0 }
   updateHud()
-  // Let the HUD paint "thinking" before the (blocking) search.
-  setTimeout(() => {
-    if (mode.kind !== "ai" || opponent === "human") return
-    const level = AI_LEVELS[opponent]
-    const plan = planShot(game, level, aiRng)
+  void Promise.all([askAi("plan"), delay(MIN_THINK_MS)]).then(([res]) => {
+    if (gen !== generation || mode.kind !== "ai" || opponent === "human") return
+    if (!res.plan) throw new Error(`computer planning failed: ${res.error}`)
+    const plan = res.plan
     if (plan.placement) {
       game.placeCueBall(plan.placement)
       syncBalls()
     }
-    const strike = executionNoise(plan.strike, level, aiRng)
+    const strike = executionNoise(plan.strike, AI_LEVELS[opponent], aiRng)
     aim.theta = strike.theta
     elevation.value = String(aim.theta)
     setTip(strike.a, strike.b)
@@ -193,7 +222,7 @@ function startAiTurn(): void {
     callManual = true
     mode = { kind: "ai", phase: "aim", t: 0, plan, strike, fromPhi: aim.phi, pull: 0 }
     updateHud()
-  }, 60)
+  })
 }
 
 function advanceAi(m: Extract<Mode, { kind: "ai" }>, dt: number): void {
@@ -228,6 +257,8 @@ const speedFor = (pull: number) => 0.15 + (MAX_SPEED - 0.15) * (pull / MAX_PULL)
 
 function newGame(discipline: Discipline): void {
   const seed = (Math.random() * 2 ** 32) >>> 0
+  generation++
+  aiDeciding = false
   game = new Game({ discipline, seed })
   aiRng = createRng(seed ^ 0x5bd1e995)
   opponent = $<HTMLSelectElement>("opponent").value as Opponent
@@ -285,11 +316,13 @@ function setupLights(): void {
 
 function setView(v: 1 | 2 | 3): void {
   const { w, l } = game.spec
+  // Narrow (portrait) screens need the camera further back to fit the table's width.
+  const fit = Math.min(2.2, Math.max(1, 0.85 / camera.aspect))
   if (v === 1) {
-    camera.position.set(w / 2, -1.5, 1.7)
     controls.target.set(w / 2, l * 0.45, 0)
+    camera.position.set(w / 2, l * 0.45 - (1.5 + l * 0.45) * fit, 1.7 * fit)
   } else if (v === 2) {
-    camera.position.set(w / 2 + 0.0001, l / 2, 3.4)
+    camera.position.set(w / 2 + 0.0001, l / 2, 3.4 * Math.max(1, fit * 0.8))
     controls.target.set(w / 2, l / 2, 0)
   } else {
     const c = game.balls.get(CUE)
@@ -326,82 +359,198 @@ function onBallPlane(e: PointerEvent): THREE.Vector3 | null {
   return raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -game.params.R), p) ? p : null
 }
 
+/** Whether the human may start an action now. */
+const canAct = () => mode.kind === "aim" && game.state.winner === null && !game.state.pending && humanTurn()
+
+/** Aim the cue from the cue ball toward the point under the pointer. */
+function aimAt(e: PointerEvent): void {
+  const p = onBallPlane(e)
+  const c = game.balls.get(CUE)
+  if (p && c && Math.hypot(p.x - c.r[0], p.y - c.r[1]) > 2 * game.params.R) {
+    aim.phi = (Math.atan2(p.y - c.r[1], p.x - c.r[0]) * 180) / Math.PI
+  }
+}
+
+/** With ball in hand, start dragging the cue ball if the pointer is on it (fingers get a wider target). */
+function grabCueBall(e: PointerEvent, touch: boolean): boolean {
+  if (game.state.cueBallInHand === "none") return false
+  const s = game.balls.get(CUE)
+  if (!s) return false
+  pointerTo(e)
+  let hit = raycaster.intersectObject(balls.get(CUE)!).length > 0
+  if (!hit && touch) {
+    const p = onBallPlane(e)
+    hit = !!p && Math.hypot(p.x - s.r[0], p.y - s.r[1]) < 3 * game.params.R
+  }
+  if (hit) mode = { kind: "place", last: [s.r[0], s.r[1]] }
+  return hit
+}
+
+function movePlaced(e: PointerEvent): void {
+  if (mode.kind !== "place") return
+  const p = onBallPlane(e)
+  if (!p) return
+  const m = balls.get(CUE)!
+  m.position.set(p.x, p.y, game.params.R)
+  const ok = !game.placementProblem([p.x, p.y])
+  ;(m.material as THREE.MeshPhysicalMaterial).emissive.set(ok ? 0x000000 : 0x661111)
+  if (ok) mode.last = [p.x, p.y]
+}
+
+function finishPlace(): void {
+  if (mode.kind !== "place") return
+  ;(balls.get(CUE)!.material as THREE.MeshPhysicalMaterial).emissive.set(0x000000)
+  game.placeCueBall(mode.last)
+  syncBalls()
+  mode = { kind: "aim" }
+  updateHud()
+}
+
+function startDraw(x: number, y: number, scale: number): void {
+  mode = { kind: "draw", startX: x, startY: y, pull: 0, scale }
+  updatePower()
+}
+
+function moveDraw(y: number): void {
+  if (mode.kind !== "draw") return
+  mode.pull = Math.min(MAX_PULL, Math.max(0, (y - mode.startY) * mode.scale))
+  updatePower()
+}
+
+/** Release the cue: shoot if it was drawn back, otherwise treat a mouse release as a click. */
+function endDraw(click: PointerEvent | null): void {
+  if (mode.kind !== "draw") return
+  if (mode.pull > 0.01 && needsCall() && !callComplete()) {
+    lastNotes = ["Call a ball and a pocket first (click or tap them), or call Safety (WPA 4.6)."]
+    mode = { kind: "aim" }
+  } else if (mode.pull > 0.01) {
+    const V0 = speedFor(mode.pull)
+    mode = { kind: "stroke", pull: mode.pull, V0, t: 0, dur: Math.min(0.15, Math.max(0.04, (mode.pull + IDLE_GAP) / (V0 * 0.6))) }
+    aimLocked = false
+  } else {
+    const moved = click ? Math.hypot(click.clientX - mode.startX, click.clientY - mode.startY) : Infinity
+    if (click && moved < 4 && !pickCall(click)) aimLocked = !aimLocked
+    mode = { kind: "aim" }
+  }
+  updatePower()
+  updateHud()
+}
+
 let rightDown = false
+/** Touch points currently down on the canvas. */
+const touches = new Set<number>()
+
 canvas.addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "touch") {
+    touches.add(e.pointerId)
+    if (touches.size > 1) {
+      // A second finger hands the gesture to the camera.
+      if (mode.kind === "place") syncBalls()
+      if (mode.kind === "touchAim") aim.phi = mode.phiBefore
+      if (mode.kind === "touchAim" || mode.kind === "place") mode = { kind: "aim" }
+      return
+    }
+    if (!canAct() || grabCueBall(e, true)) return
+    // Don't aim yet: this may be the first finger of a two-finger gesture.
+    mode = { kind: "touchAim", startX: e.clientX, startY: e.clientY, phiBefore: aim.phi, moved: false }
+    return
+  }
   if (e.button === 2) {
     rightDown = true
     if (mode.kind === "draw") mode = { kind: "aim" }
     return
   }
-  if (e.button !== 0 || mode.kind !== "aim" || game.state.winner !== null || game.state.pending || !humanTurn()) return
-  // Ball in hand: grab the cue ball.
-  if (game.state.cueBallInHand !== "none") {
-    pointerTo(e)
-    const cueMesh = balls.get(CUE)!
-    if (raycaster.intersectObject(cueMesh).length > 0) {
-      const s = game.balls.get(CUE)!
-      mode = { kind: "place", last: [s.r[0], s.r[1]] }
-      canvas.setPointerCapture(e.pointerId)
-      return
-    }
-  }
-  mode = { kind: "draw", startX: e.clientX, startY: e.clientY, pull: 0 }
+  if (e.button !== 0 || !canAct()) return
   canvas.setPointerCapture(e.pointerId)
+  if (grabCueBall(e, false)) return
+  startDraw(e.clientX, e.clientY, 0.0012)
 })
 
 canvas.addEventListener("pointermove", (e) => {
-  if (rightDown) return
-  if (mode.kind === "aim" && !aimLocked && humanTurn()) {
-    const p = onBallPlane(e)
-    const c = game.balls.get(CUE)
-    if (p && c && Math.hypot(p.x - c.r[0], p.y - c.r[1]) > 2 * game.params.R) {
-      aim.phi = (Math.atan2(p.y - c.r[1], p.x - c.r[0]) * 180) / Math.PI
-    }
-  } else if (mode.kind === "draw") {
-    mode.pull = Math.min(MAX_PULL, Math.max(0, (e.clientY - mode.startY) * 0.0012))
-    updatePower()
-  } else if (mode.kind === "place") {
-    const p = onBallPlane(e)
-    if (!p) return
-    const R = game.params.R
-    const m = balls.get(CUE)!
-    m.position.set(p.x, p.y, R)
-    const ok = !game.placementProblem([p.x, p.y])
-    ;(m.material as THREE.MeshPhysicalMaterial).emissive.set(ok ? 0x000000 : 0x661111)
-    if (ok) mode.last = [p.x, p.y]
+  if (e.pointerType === "touch") {
+    if (mode.kind === "touchAim" && touches.size === 1) {
+      if (!mode.moved && Math.hypot(e.clientX - mode.startX, e.clientY - mode.startY) > 6) mode.moved = true
+      if (mode.moved) aimAt(e)
+    } else movePlaced(e)
+    return
   }
+  if (rightDown) return
+  if (mode.kind === "aim" && !aimLocked && humanTurn()) aimAt(e)
+  else if (mode.kind === "draw") moveDraw(e.clientY)
+  else movePlaced(e)
 })
 
+function touchEnd(e: PointerEvent): void {
+  touches.delete(e.pointerId)
+  if (mode.kind === "touchAim") {
+    // A tap (not a drag) picks the call if it hit a ball or pocket; otherwise it aims there.
+    if (e.type === "pointerup" && !mode.moved && !pickCall(e)) aimAt(e)
+    mode = { kind: "aim" }
+    updateHud()
+  } else if (mode.kind === "place") {
+    finishPlace()
+  }
+}
+
 canvas.addEventListener("pointerup", (e) => {
+  if (e.pointerType === "touch") return touchEnd(e)
   if (e.button === 2) {
     rightDown = false
     return
   }
   if (e.button !== 0) return
+  if (mode.kind === "draw") endDraw(e)
+  else finishPlace()
+})
+canvas.addEventListener("pointercancel", (e) => {
+  if (e.pointerType === "touch") return touchEnd(e)
   if (mode.kind === "draw") {
-    const moved = Math.hypot(e.clientX - mode.startX, e.clientY - mode.startY)
-    if (mode.pull > 0.01 && needsCall() && !callComplete()) {
-      lastNotes = ["Call a ball and a pocket first (click them), or call Safety (WPA 4.6)."]
-      mode = { kind: "aim" }
-    } else if (mode.pull > 0.01) {
-      const V0 = speedFor(mode.pull)
-      mode = { kind: "stroke", pull: mode.pull, V0, t: 0, dur: Math.min(0.15, Math.max(0.04, (mode.pull + IDLE_GAP) / (V0 * 0.6))) }
-      aimLocked = false
-    } else {
-      if (moved < 4 && !pickCall(e)) aimLocked = !aimLocked
-      mode = { kind: "aim" }
-    }
-    updatePower()
-    updateHud()
-  } else if (mode.kind === "place") {
-    const m = balls.get(CUE)!
-    ;(m.material as THREE.MeshPhysicalMaterial).emissive.set(0x000000)
-    game.placeCueBall(mode.last)
-    syncBalls()
     mode = { kind: "aim" }
-    updateHud()
+    updatePower()
   }
 })
+
+// ---------- Stroke pad and fine aim (touch-friendly, also work with a mouse) ----------
+
+const pad = $("pad")
+const padKnob = $("pad-knob")
+pad.addEventListener("pointerdown", (e) => {
+  if (!canAct() || !game.balls.get(CUE)) return
+  e.preventDefault()
+  pad.setPointerCapture(e.pointerId)
+  // The pad's travel covers the full draw-back.
+  startDraw(e.clientX, e.clientY, MAX_PULL / Math.max(80, pad.clientHeight - padKnob.offsetHeight - 12))
+})
+pad.addEventListener("pointermove", (e) => {
+  if (pad.hasPointerCapture(e.pointerId)) moveDraw(e.clientY)
+})
+pad.addEventListener("pointerup", () => endDraw(null))
+pad.addEventListener("pointercancel", () => {
+  if (mode.kind === "draw") mode = { kind: "aim" }
+  updatePower()
+})
+
+function holdRepeat(button: HTMLElement, step: () => void): void {
+  let timer = 0
+  const stop = () => clearInterval(timer)
+  button.addEventListener("pointerdown", (e) => {
+    e.preventDefault()
+    step()
+    clearInterval(timer)
+    timer = window.setInterval(step, 60)
+  })
+  for (const ev of ["pointerup", "pointerleave", "pointercancel"]) button.addEventListener(ev, stop)
+}
+const fineAim = (d: number) => () => {
+  if (!canAct()) return
+  aim.phi += d
+  // Fine-tuned aim shouldn't be undone by the next mouse move.
+  aimLocked = true
+  updateHud()
+}
+holdRepeat($("fine-left"), fineAim(0.05))
+holdRepeat($("fine-right"), fineAim(-0.05))
+
 canvas.addEventListener("contextmenu", (e) => e.preventDefault())
 
 // ---------- Keyboard ----------
@@ -516,6 +665,10 @@ spinCanvas.addEventListener("pointermove", (e) => {
   if (spinCanvas.hasPointerCapture(e.pointerId)) spinFromPointer(e)
 })
 spinCanvas.addEventListener("dblclick", () => setTip(0, 0))
+$<HTMLButtonElement>("tip-center").onclick = () => {
+  setTip(0, 0)
+  updateHud()
+}
 
 const elevation = $<HTMLInputElement>("elevation")
 function setElevation(t: number): void {
@@ -554,6 +707,7 @@ const OPTION_TEXT: Record<Option, string> = {
 function updatePower(): void {
   const pull = mode.kind === "draw" || mode.kind === "stroke" ? mode.pull : mode.kind === "ai" ? (mode.pull ?? 0) : 0
   powerBar.style.width = `${(100 * pull) / MAX_PULL}%`
+  padKnob.style.transform = `translateY(${(pull / MAX_PULL) * Math.max(0, pad.clientHeight - padKnob.offsetHeight - 12)}px)`
   strikeText.textContent =
     `${pull > 0 ? speedFor(pull).toFixed(2) : "—"} m/s · ` +
     `elev ${aim.theta.toFixed(0)}° · tip ${(aim.a * 100).toFixed(0)}/${(aim.b * 100).toFixed(0)} % R`
@@ -611,6 +765,7 @@ function updateHud(): void {
     b.textContent = "Next rack"
     b.onclick = () => {
       game.nextRack()
+      generation++
       lastNotes = ["New rack."]
       syncBalls()
       updateHud()
@@ -659,7 +814,8 @@ function updateCallMarkers(): void {
 
 function updateGuide(): void {
   const c = game.balls.get(CUE)
-  const visible = showGuide && !!c && (mode.kind === "aim" || mode.kind === "draw") && game.state.winner === null && humanTurn()
+  const visible =
+    showGuide && !!c && (mode.kind === "aim" || mode.kind === "touchAim" || mode.kind === "draw") && game.state.winner === null && humanTurn()
   guideLine.visible = objLine.visible = ghost.visible = visible
   if (!visible || !c) return
   const R = game.params.R
@@ -708,7 +864,7 @@ function updateGuide(): void {
       if (pocket) auto = { ball: hit, pocket }
     }
   }
-  if (needsCall() && !callManual && mode.kind === "aim") setCall(auto, false)
+  if (needsCall() && !callManual && (mode.kind === "aim" || mode.kind === "touchAim")) setCall(auto, false)
 }
 
 // ---------- Frame loop ----------
@@ -733,7 +889,8 @@ function frame(now: number): void {
     startAiTurn()
   }
 
-  cue.visible = mode.kind === "aim" || mode.kind === "draw" || mode.kind === "stroke" || (mode.kind === "ai" && mode.phase !== "think")
+  cue.visible =
+    mode.kind === "aim" || mode.kind === "touchAim" || mode.kind === "draw" || mode.kind === "stroke" || (mode.kind === "ai" && mode.phase !== "think")
   if (cue.visible && cueBall && mode.kind !== "stroke") {
     const pull = mode.kind === "draw" ? mode.pull : mode.kind === "ai" ? (mode.pull ?? 0) : 0
     poseCue(cue, new THREE.Vector3(cueBall.r[0], cueBall.r[1], cueBall.r[2]), R, aim.phi, aim.theta, aim.a, aim.b, IDLE_GAP + pull)
@@ -779,9 +936,10 @@ function advanceReplay(m: Extract<Mode, { kind: "replay" }>, dt: number): void {
 
 // ---------- Start ----------
 
+resize()
 newGame("9-ball")
 // Dev-only hook for scripted browser checks.
-if (import.meta.env.DEV) Object.assign(globalThis, { __pp: { aim, get game() { return game }, get mode() { return mode.kind }, camera, controls } })
+if (import.meta.env.DEV) Object.assign(globalThis, { __pp: { aim, get game() { return game }, get mode() { return mode.kind }, camera, controls, setOpponent: (o: Opponent) => (opponent = o) } })
 drawSpin()
 resize()
 requestAnimationFrame(frame)

@@ -47,6 +47,10 @@ Benchmark: AI against itself, 4 racks per level, 2026-11-19 (`AI_BENCH=1 pnpm --
 | Medium | 49% | 70% | 44–83 ms (227 ms) |
 | Hard | 80% | 84% | 66–106 ms (365 ms) |
 
+## In the browser
+
+The 3D view runs the search in a Web Worker (`packages/web/src/play/ai-worker.ts`). It sends a plain-data `Game.snapshot()` and an RNG seed, and drops any answer that arrives after a new game or rack has started. Execution noise is applied on the main thread. A 10 ms main-thread timer shows no extra stall while the computer thinks (14 ms worst gap, the same as idle).
+
 ## Decisions
 
 - **Spot the 8** whenever offered (4.3(e), (f)).
@@ -57,4 +61,3 @@ Benchmark: AI against itself, 4 racks per level, 2026-11-19 (`AI_BENCH=1 pnpm --
 - Kick and bank shots, combinations and caroms.
 - Intentional push outs.
 - Sidespin candidates.
-- Running the search in a Web Worker. It takes under 0.4 s, so it currently runs on the main thread behind a "thinking" status.
