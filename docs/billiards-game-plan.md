@@ -29,6 +29,7 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 | NumPy 2.5.5 (BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0; bundles OpenBLAS, BSD-3-Clause, and the GCC runtime under the GCC Runtime Library Exception) | Permissive (verified 2026-11-19 from the wheel metadata and license file) | Reference harness only (`tools/reference`): accuracy comparison for our solvers. Not shipped | None for shipped code |
 | pooltool's Python dependencies (numba, llvmlite, scipy, panda3d, attrs, cattrs, msgpack, h5py, Pillow, rich, …) and uv | All permissive: MIT, BSD-2/3-Clause, Apache-2.0, PSF-2.0, MIT-CMU (verified 2026-11-19 from each package's metadata) | Reference harness only. Not shipped | None for shipped code |
 | Vite 8 (MIT) and its dependencies: MIT, Apache-2.0, ISC, BSD-3-Clause, plus lightningcss (**MPL-2.0**) | Verified 2026-11-19 from each installed package.json | Dev server and bundler for `packages/web`. lightningcss only processes our CSS at build time and none of its code ships, so MPL's file-level copyleft doesn't reach our code | None for shipped code |
+| three.js 0.187.0 (MIT), shipped in the web client; `@types/three` (MIT, dev only; its type-only dependencies are MIT and Apache-2.0) | Verified 2026-11-19 | Rendering | Ship the copyright notice: `LICENSES/three-MIT.txt`, listed in THIRD_PARTY_NOTICES.md |
 | Dev tools: TypeScript (Apache-2.0), Vitest (MIT), oxlint (MIT), @types/node (MIT) | Permissive (verified 2026-11-19 from each package.json) | Build and test only; not shipped to players | None for shipped code |
 
 **Our project license: MIT** (decided 2026-11-19).
@@ -110,9 +111,15 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 - ✅ **2D debug view** (`packages/web`, `pnpm --filter @pixelpoolhall/web dev`). It replays any fixture shot through our engine and shows paths, color-coded event markers, a scrubbable timeline, editable strike parameters, and pooltool's event positions as rings. Deep links: `#category/shot@time`.
 
 ### Phase 2: Playable game
-- A Three.js table, aiming UI, and controls for spin, elevation and power.
+- ✅ **Minimal 3D view** (`packages/web`, `index.html`): Three.js 0.187 (MIT) table built from the physics table geometry, WPA ball colors, and a floating cue.
+  - Mouse aim, with a click to lock the aim; drag back to draw the cue, release to shoot.
+  - Cue-tip offset widget and elevation; ball-in-hand dragging; an aim guide.
+  - Exact replay of the simulated shot, with balls spinning from the physics' angular velocity.
+  - Rulings and pending choices shown in the HUD.
+  - The 2D debug view moved to `debug.html`.
+  - Still to do: a room background, a call-shot picker (8-ball currently runs with calls off), touch controls.
 - ✅ **8-ball and 9-ball rules** (`packages/game`), from the WPA Rules of Play and Regulations effective 2026-10-21. Covers the break and its options, open table and groups, called shots and safeties, push out, the three-ball break rule, three consecutive fouls, spotting, and cue ball in hand (including the head-string restrictions). It also includes WPA racks and a `Game` session that runs shots through the physics and applies each ruling. See [rules.md](rules.md).
-- Computer opponent using shot search, with difficulty levels.
+- Computer opponent using shot search, with difficulty levels. (Until then, two players share the mouse.)
 
 ### Phase 3: Accuracy beyond the references
 - **3D:** airborne balls, jump shots, landings, balls hopping the rail.

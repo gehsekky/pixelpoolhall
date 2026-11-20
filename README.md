@@ -14,7 +14,7 @@ self-hosted, MIT licensed.
 |---|---|
 | `packages/physics` | Event-based physics engine. Pure TypeScript, no runtime dependencies. |
 | `packages/game` | Game logic: WPA 8-ball and 9-ball rules, racks, spotting, match flow. |
-| `packages/web` | 2D physics debug view (Vite). Later the game client. |
+| `packages/web` | Game client: 3D table and floating cue (Three.js), plus the 2D physics debug view at `/debug.html`. |
 | `tools/reference` | Python reference harness: NumPy and pooltool comparisons. |
 | `docs/` | Plan, design and research notes. |
 
@@ -29,7 +29,7 @@ pnpm install
 pnpm test        # all packages
 pnpm typecheck
 pnpm lint
-pnpm --filter @pixelpoolhall/web dev   # physics debug view
+pnpm --filter @pixelpoolhall/web dev   # game at /, physics debug view at /debug.html
 ```
 
 ## License

@@ -46,6 +46,10 @@ Where the rules leave room, or a simulation can't reproduce the situation exactl
 - **Spotting (1.5).** A spotted ball is placed 1 µm from the ball it rests against ("in contact"), and 1 mm from the cue ball ("a small separation").
 - **Cue-ball placement (1.6).** Anywhere on the playing surface that doesn't overlap a ball or sit inside a pocket's capture circle. Above the head string, when restricted (3.10).
 
+## Options
+
+- **`rules.callShots`** (8-ball, default on). With calls off, which is not a WPA rule, the first legal ball pocketed counts as called, in the pocket it went in; that includes the 8. The 3D view runs with calls off until it has a call-shot picker.
+
 ## Not modeled
 
 - **Fouls that need a person at the table:** foot on floor, touched ball, double hit, push shot, balls still moving, playing out of turn, slow play, rack template.

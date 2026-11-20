@@ -28,7 +28,7 @@ interface FixtureShot {
 }
 interface FixtureFile { category: string; shots: FixtureShot[] }
 
-const fixtureModules = import.meta.glob<FixtureFile>("../../physics/test/fixtures/pooltool/*.json", { import: "default" })
+const fixtureModules = import.meta.glob<FixtureFile>("../../../physics/test/fixtures/pooltool/*.json", { import: "default" })
 const fixtures: FixtureFile[] = await Promise.all(Object.values(fixtureModules).map((load) => load()))
 fixtures.sort((a, b) => a.category.localeCompare(b.category))
 

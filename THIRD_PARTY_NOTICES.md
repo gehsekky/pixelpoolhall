@@ -52,3 +52,9 @@ Before adding anything here, check the licensing policy in
   text is not reproduced.
 - WPA "Recommended Equipment Specifications" (effective November 2001): the
   `WPA_9FT` table preset in `packages/physics/src/table-builder.ts`.
+
+## Bundled runtime dependencies
+
+- three.js 0.187.0 (https://threejs.org), Copyright 2010–2026 three.js authors,
+  MIT License (see `LICENSES/three-MIT.txt`). Bundled into the web client,
+  including the OrbitControls and RoomEnvironment add-ons.

@@ -204,6 +204,26 @@ describe("8-ball play (WPA 4.4–4.9)", () => {
   })
 })
 
+describe("8-ball without calls (callShots: false)", () => {
+  const s: GameState = { ...open8(), rules: { threeBallRule: true, callShots: false } }
+
+  it("any legal ball pocketed counts and assigns groups", () => {
+    const r = judge(s, shot(hit("12", { pockets: [["12", "rb"]] }), ALL15))
+    expect(r.state.groups).toEqual(["stripes", "solids"])
+    expect(r.state.shooter).toBe(0)
+  })
+
+  it("the 8 in any pocket wins once the group is cleared", () => {
+    const r = judge({ ...s, groups: ["solids", "stripes"] }, shot(hit("8", { pockets: [["8", "lc"]] }), ["8", "9"]))
+    expect(r.state.winner).toBe(0)
+  })
+
+  it("the 8 early still loses", () => {
+    const r = judge(s, shot(hit("3", { pockets: [["8", "lc"]] }), ALL15))
+    expect(r.state.winner).toBe(1)
+  })
+})
+
 describe("9-ball (WPA 5, Regulation 16)", () => {
   const s = newRack("9-ball", 0)
   const crossed = ["2", "3", "4"]

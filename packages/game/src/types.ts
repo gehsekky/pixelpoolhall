@@ -66,9 +66,15 @@ export type Pending =
 export interface RuleOptions {
   /** WPA Regulation 16 (three-ball break rule) at 9-ball. Default on. */
   threeBallRule: boolean
+  /**
+   * 8-ball: shots must be called (WPA 1.7, 4.6). Default on. When off (not a
+   * WPA rule), the first legal ball pocketed counts as called in the pocket it
+   * went in. That includes the 8.
+   */
+  callShots: boolean
 }
 
-export const DEFAULT_RULE_OPTIONS: Readonly<RuleOptions> = { threeBallRule: true }
+export const DEFAULT_RULE_OPTIONS: Readonly<RuleOptions> = { threeBallRule: true, callShots: true }
 
 export type CueBallInHand = "none" | "kitchen" | "table"
 

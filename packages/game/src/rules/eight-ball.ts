@@ -99,6 +99,12 @@ function judgeBreak(s: GameState, shot: ShotInput): Ruling {
   return { state: { ...base, shooter: opp }, fouls, spot, rerack: false, notes }
 }
 
+/** With calls off: the first legal ball pocketed, in the pocket it went in. */
+function impliedCall(f: ShotInput["facts"], legal: ReadonlySet<string>): Call | null {
+  const p = f.pocketed.find((x) => legal.has(x.ball))
+  return p ? { ball: p.ball, pocket: p.pocket } : null
+}
+
 const isCalled = (call: Call | null | undefined, ball: string, pocket: string): boolean =>
   !!call && call !== "safety" && call.ball === ball && call.pocket === pocket
 
@@ -108,10 +114,10 @@ export function judgeEightBall(s: GameState, shot: ShotInput): Ruling {
   if (s.isBreak) return judgeBreak(s, shot)
 
   const f = shot.facts
-  const call = shot.call ?? null
   const shooter = s.shooter
   const opp = other(shooter)
   const legal = legalTargets(s, shooter, shot.onTable)
+  const call = s.rules.callShots ? (shot.call ?? null) : impliedCall(f, legal)
   const pocketed = objectPocketed(f)
   const offTable = objectOffTable(f)
 
