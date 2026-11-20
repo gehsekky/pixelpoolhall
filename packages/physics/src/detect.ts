@@ -13,7 +13,7 @@
  */
 import { createRoots, solveQuadratic, solveQuartic, type Roots } from "./math/roots/index.ts"
 import { isRealRoot, smallestNonnegativeReal } from "./math/roots/select.ts"
-import { evolve, EPS, halfAcceleration, isNontranslating, isOutOfPlay, MotionState, type BallState } from "./motion.ts"
+import { EPS, halfAcceleration, isNontranslating, isOutOfPlay, MotionState, type BallState } from "./motion.ts"
 import type { BallParams } from "./params.ts"
 import { cushionHeight, CushionSide, lineCoefficients, type CircularCushion, type LinearCushion, type Pocket } from "./table.ts"
 
@@ -72,12 +72,16 @@ export function ballsOverlap(b1: BallState, b2: BallState, R1: number, R2: numbe
  * when its center is `contact = sqrt((R + n)² − (h − R)²)` from the rail line
  * in the table plane, which is linear in the line equation: a quadratic in τ.
  */
+/** Distance in the table plane from the rail line to a touching ball's center (NaN if the nose is out of reach). */
+export function contactDistance(R: number, c: LinearCushion): number {
+  const sq = (R + c.noseRadius) ** 2 - (cushionHeight(c) - R) ** 2
+  return sq > 0 ? Math.sqrt(sq) : NaN
+}
+
 export function linearCushionTime(b: BallState, p: BallParams, c: LinearCushion): number {
   if (isNontranslating(b.s) || b.s === MotionState.airborne) return Infinity
-  const h = cushionHeight(c)
-  const contactSq = (p.R + c.noseRadius) ** 2 - (h - p.R) ** 2
-  if (contactSq <= 0) return Infinity
-  const contact = Math.sqrt(contactSq)
+  const contact = contactDistance(p.R, c)
+  if (!(contact > 0)) return Infinity
   const { lx, ly, l0 } = lineCoefficients(c)
   const ln = Math.hypot(lx, ly)
   const acc = halfAcceleration(b, p)
@@ -94,12 +98,16 @@ export function linearCushionTime(b: BallState, p: BallParams, c: LinearCushion)
     for (let i = 0; i < roots.count; i++) {
       const t = roots.re[i]!
       if (Math.abs(roots.im[i]!) > EPS || t <= EPS || t >= best) continue
-      const at = evolve(b, p, t)
+      // Position and velocity at the root, on the current parabola.
+      const x = b.r[0] + b.v[0] * t + acc[0] * t * t
+      const y = b.r[1] + b.v[1] * t + acc[1] * t * t
+      const vx = b.v[0] + 2 * acc[0] * t
+      const vy = b.v[1] + 2 * acc[1] * t
       // Contact point must lie within the segment.
-      const s = ((at.r[0] - c.p1[0]) * dx + (at.r[1] - c.p1[1]) * dy) / len2
+      const s = ((x - c.p1[0]) * dx + (y - c.p1[1]) * dy) / len2
       if (!(s >= 0 && s <= 1)) continue
-      const signed = l0 + lx * at.r[0] + ly * at.r[1]
-      const normalSpeed = (lx * at.v[0] + ly * at.v[1]) / ln
+      const signed = l0 + lx * x + ly * y
+      const normalSpeed = (lx * vx + ly * vy) / ln
       if (-Math.sign(signed) * normalSpeed <= EPS) continue
       best = t
     }

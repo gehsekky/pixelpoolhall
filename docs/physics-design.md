@@ -296,6 +296,28 @@ All parameters live in one typed registry. Each entry records its **value, unit,
 - **Less work:** caching as described above, plus quick rejection of pairs that can't meet.
 - **Workers:** the AI search runs in a web worker; several workers can split the candidate shots.
 - **Benchmarks** in CI: the break, a typical 8-ball shot, and 1,000 random shots. Track how long each takes and how many events per second the engine processes.
+- **As built (2026-11-19).** Measured with `node packages/physics/test/engine-bench.ts` on Node 26, one core, over the pooltool fixture shots:
+
+  | Shots | Before | After | Shots/s after |
+  |---|---|---|---|
+  | Typical (motion, cushion, jaw, cut, pocket, random) | 0.10–0.68 ms | 0.03–0.11 ms | 9,000–36,000 |
+  | Frozen combinations (144 events) | 6.3 ms | 0.70 ms | 1,400 |
+  | Breaks (116 events) | 19.1 ms | 1.73 ms | 580 |
+
+  - **What changed.** All of these leave the results unchanged: the fixture comparison errors are identical to the digit.
+    - Caches became flat `Float64Array`s indexed by ball and object, with `NaN` marking stale entries. Invalidating a ball touches only its own row.
+    - Each ball keeps a per-row minimum for each object cache.
+    - A ball's current state is evaluated lazily.
+    - Quick rejection uses the trajectory horizon. A ball's segment ends at its next transition, which invalidates its entries, so only contacts within that horizon matter. The ball's reach over the horizon (exact for rolling; a triangle bound otherwise), and a relative-motion bound for pairs, skip most quartic solves.
+  - **Where break time goes now.**
+    - ~30% is in the quartic solver: about 14 solves per event (9 ball–ball, 5 jaw or pocket).
+    - ~10% is the pair scan.
+    - The rest is evaluating states and the vector helpers' allocations; GC is about 2%.
+  - **Not done yet.**
+    - Allocation-free vector math.
+    - Per-row minima for the pair cache.
+    - A tighter reach bound for long rolling horizons, by splitting each horizon into sub-intervals.
+    - Benchmarks in CI.
 
 ---
 

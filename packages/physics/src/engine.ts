@@ -18,14 +18,16 @@
  * Copyright Evan Kiefl, Apache License 2.0 (see LICENSES/pooltool-Apache-2.0.txt).
  * Modified: rewritten in TypeScript with per-ball trajectory segments.
  */
-import { ballBallTime, ballsOverlap, circularCushionTime, linearCushionTime, pocketTime } from "./detect.ts"
-import { squaredNorm, sub } from "./math/vec3.ts"
+import { ballBallTime, ballsOverlap, circularCushionTime, contactDistance, linearCushionTime, pocketTime } from "./detect.ts"
+import { squaredNorm, sub, ZERO } from "./math/vec3.ts"
 import {
   applyTransition,
   cloneState,
   evolve,
+  halfAcceleration,
   isNontranslating,
   isOutOfPlay,
+  MotionState,
   nextTransition,
   type BallState,
   type TransitionType,
@@ -35,7 +37,7 @@ import { resolveBallBall } from "./resolve/ball-ball.ts"
 import { resolveCircularCushion, resolveLinearCushion } from "./resolve/cushion.ts"
 import { resolvePocket } from "./resolve/pocket.ts"
 import { resolveStickBall, type CueStrike } from "./resolve/stick-ball.ts"
-import type { Table } from "./table.ts"
+import { lineCoefficients, type Table } from "./table.ts"
 
 export type EventType =
   | "none"
@@ -88,12 +90,6 @@ interface Ball {
   t0: number
 }
 
-interface Candidate {
-  type: EventType
-  time: number
-  ids: string[]
-}
-
 const stateAt = (b: Ball, t: number): BallState => evolve(b.start, b.p, t - b.t0)
 
 /** Mechanical energy relative to a ball at rest on the table. */
@@ -118,119 +114,225 @@ function tier(type: EventType): number {
   }
 }
 
+/** A pending event, by index: ball i; ball j (ball_ball) or the cushion/pocket index. */
+interface Pending {
+  type: EventType
+  time: number
+  i: number
+  j: number
+}
+
+const NONE: Pending = { type: "none", time: Infinity, i: -1, j: -1 }
+
 export function simulate(shot: Shot): ShotResult {
   const config = shot.config ?? DEFAULT_MODEL_CONFIG
   const cueSpecs = shot.cueSpecs ?? DEFAULT_CUE_SPECS
   const maxEvents = shot.maxEvents ?? 10_000
   const balls: Ball[] = shot.balls.map((b) => ({ id: b.id, p: b.params, start: cloneState(b.state), t0: 0 }))
-  const byId = new Map(balls.map((b) => [b.id, b]))
+  const n = balls.length
+  const cueIndex = balls.findIndex((b) => b.id === shot.cueBall)
   const { linear, circular, pockets } = shot.table
+  const nL = linear.length
+  const nC = circular.length
+  const nP = pockets.length
+  const lineGeom = linear.map((c) => {
+    const l = lineCoefficients(c)
+    return { ...l, ln: Math.hypot(l.lx, l.ly) }
+  })
 
   let t = 0
   const events: SimEvent[] = [{ type: "none", time: 0, ids: ["dummy"], states: {} }]
   let struck = false
 
-  // Caches: absolute event times. Transition entries hold their type too.
-  const transitions = new Map<string, { time: number; type: TransitionType } | null>()
-  const pairTimes = new Map<string, number>() // "i|j" by index into balls
-  const linearTimes = new Map<string, number>()
-  const circularTimes = new Map<string, number>()
-  const pocketTimes = new Map<string, number>()
+  // Caches of absolute event times; NaN marks an entry to recompute. Pair
+  // entries use the upper triangle (i < j) of an n×n matrix.
+  const pairT = new Float64Array(n * n).fill(NaN)
+  const linT = new Float64Array(n * nL).fill(NaN)
+  const circT = new Float64Array(n * nC).fill(NaN)
+  const pockT = new Float64Array(n * nP).fill(NaN)
+  const trT = new Float64Array(n)
+  const trType: (TransitionType | null)[] = new Array(n).fill(null)
 
-  const refreshTransition = (b: Ball) => {
+  // Each ball's state at the current time t, evaluated on demand.
+  const now: (BallState | null)[] = new Array(n).fill(null)
+  const nowAt = new Float64Array(n).fill(NaN)
+  const current = (i: number): BallState => {
+    if (nowAt[i] !== t) {
+      now[i] = stateAt(balls[i]!, t)
+      nowAt[i] = t
+    }
+    return now[i]!
+  }
+
+  /**
+   * Quick rejection. A ball's current trajectory segment lasts until its next
+   * transition, which invalidates all of its cached times before any later
+   * collision could fire, so only contacts within that horizon matter. Within
+   * horizon H the ball moves at most |v|·H + |h|·H² (h = half its
+   * acceleration), so objects farther away need no root solve.
+   */
+  const reachOf = (i: number, horizon: number): number => {
+    const s = current(i)
+    if (isNontranslating(s.s)) return 0
+    const h = halfAcceleration(s, balls[i]!.p)
+    const speed = Math.hypot(s.v[0], s.v[1])
+    const decel = Math.hypot(h[0], h[1])
+    // Rolling: h is exactly opposite v, so the reach is the distance rolled
+    // (horizon ≤ the stopping time). Otherwise bound |v τ + h τ²| by the
+    // triangle inequality.
+    if (s.s === MotionState.rolling) return speed * horizon - decel * horizon * horizon
+    return speed * horizon + decel * horizon * horizon
+  }
+  const horizon = (i: number) => trT[i]! - t
+  // Each ball's reach over its own horizon, cached per time step. Reach grows
+  // with the horizon, so this also bounds the reach over any shorter one.
+  const reachVal = new Float64Array(n)
+  const reachAt = new Float64Array(n).fill(NaN)
+  const reach = (i: number): number => {
+    if (reachAt[i] !== t) {
+      reachVal[i] = reachOf(i, horizon(i))
+      reachAt[i] = t
+    }
+    return reachVal[i]!
+  }
+
+  /**
+   * How much two balls' separation can shrink before either changes state:
+   * relative motion C + B τ + A τ² closes by at most |B| H + |A| H². Tighter
+   * than the sum of reaches when the balls move together (e.g. after a break).
+   */
+  const relativeReach = (i: number, j: number): number => {
+    const H = Math.min(horizon(i), horizon(j))
+    const a = current(i)
+    const b = current(j)
+    const ha = isNontranslating(a.s) ? ZERO : halfAcceleration(a, balls[i]!.p)
+    const hb = isNontranslating(b.s) ? ZERO : halfAcceleration(b, balls[j]!.p)
+    const va = isNontranslating(a.s) ? ZERO : a.v
+    const vb = isNontranslating(b.s) ? ZERO : b.v
+    return Math.hypot(vb[0] - va[0], vb[1] - va[1]) * H + Math.hypot(hb[0] - ha[0], hb[1] - ha[1]) * H * H
+  }
+
+  const refreshTransition = (i: number) => {
+    const b = balls[i]!
     const next = nextTransition(b.start, b.p)
-    transitions.set(b.id, next ? { time: b.t0 + next.dt, type: next.type } : null)
+    trT[i] = next ? b.t0 + next.dt : Infinity
+    trType[i] = next ? next.type : null
   }
-  for (const b of balls) refreshTransition(b)
+  for (let i = 0; i < n; i++) refreshTransition(i)
 
-  const invalidate = (ids: Set<string>) => {
-    for (const map of [pairTimes, linearTimes, circularTimes, pocketTimes]) {
-      for (const key of map.keys()) {
-        const [a, b] = key.split("|")
-        if (map === pairTimes ? ids.has(balls[+a!]!.id) || ids.has(balls[+b!]!.id) : ids.has(a!)) map.delete(key)
+  const invalidate = (i: number) => {
+    for (let k = 0; k < n; k++) {
+      pairT[i < k ? i * n + k : k * n + i] = NaN
+    }
+    linT.fill(NaN, i * nL, (i + 1) * nL)
+    circT.fill(NaN, i * nC, (i + 1) * nC)
+    pockT.fill(NaN, i * nP, (i + 1) * nP)
+    lin.rowT[i] = NaN
+    circ.rowT[i] = NaN
+    pock.rowT[i] = NaN
+    nowAt[i] = NaN
+    reachAt[i] = NaN
+  }
+
+  /** Earliest pending entry of one ball–object cache, computing stale entries. */
+  /** A ball–object cache plus each ball's row minimum (NaN = row changed). */
+  interface ObjectCache { times: Float64Array; m: number; rowT: Float64Array; rowK: Int32Array }
+  const objectCache = (times: Float64Array, m: number): ObjectCache =>
+    ({ times, m, rowT: new Float64Array(n).fill(NaN), rowK: new Int32Array(n) })
+  const lin = objectCache(linT, nL)
+  const circ = objectCache(circT, nC)
+  const pock = objectCache(pockT, nP)
+
+  /** Earliest pending entry of a ball–object cache, recomputing only rows that changed. */
+  function earliest(
+    c: ObjectCache, type: EventType,
+    time: (s: BallState, p: BallParams, k: number) => number,
+    gap: (s: BallState, p: BallParams, k: number) => number,
+  ): Pending {
+    const { times, m, rowT, rowK } = c
+    let bestT = Infinity
+    let bestI = -1
+    for (let i = 0; i < n; i++) {
+      if (rowT[i] !== rowT[i]) {
+        let rt = Infinity
+        let rk = -1
+        for (let k = 0; k < m; k++) {
+          const idx = i * m + k
+          let v = times[idx]!
+          if (v !== v) {
+            const s = current(i)
+            const p = balls[i]!.p
+            if (isNontranslating(s.s) || gap(s, p, k) > reach(i)) v = Infinity
+            else v = t + time(s, p, k)
+            times[idx] = v
+          }
+          if (v < rt) {
+            rt = v
+            rk = k
+          }
+        }
+        rowT[i] = rt
+        rowK[i] = rk
+      }
+      if (rowT[i]! < bestT) {
+        bestT = rowT[i]!
+        bestI = i
       }
     }
+    return bestI < 0 ? NONE : { type, time: bestT, i: bestI, j: rowK[bestI]! }
   }
 
-  function nextEvent(): Candidate {
-    const candidates: Candidate[] = []
-    const cue = byId.get(shot.cueBall)!
-    if (!struck && t === 0 && !isOutOfPlay(cue.start.s) && shot.strike.V0 > 0) {
-      candidates.push({ type: "stick_ball", time: 0, ids: ["cue_stick", shot.cueBall] })
+  function nextEvent(): Pending {
+    const candidates: Pending[] = []
+    if (!struck && t === 0 && cueIndex >= 0 && !isOutOfPlay(balls[cueIndex]!.start.s) && shot.strike.V0 > 0) {
+      candidates.push({ type: "stick_ball", time: 0, i: cueIndex, j: -1 })
     }
-
-    // Transitions: first in ball order among the earliest.
-    let tr: Candidate = { type: "none", time: Infinity, ids: [] }
-    for (const b of balls) {
-      const e = transitions.get(b.id)
-      if (e && e.time < tr.time) tr = { type: e.type, time: e.time, ids: [b.id] }
-    }
+    let tr = NONE
+    for (let i = 0; i < n; i++) if (trT[i]! < tr.time) tr = { type: trType[i]!, time: trT[i]!, i, j: -1 }
     candidates.push(tr)
+    candidates.push(earliest(lin, "ball_linear_cushion", (s, p, k) => linearCushionTime(s, p, linear[k]!),
+      (s, p, k) => {
+        const g = lineGeom[k]!
+        return Math.abs(g.l0 + g.lx * s.r[0] + g.ly * s.r[1]) / g.ln - contactDistance(p.R, linear[k]!)
+      }))
+    candidates.push(earliest(circ, "ball_circular_cushion", (s, p, k) => circularCushionTime(s, p, circular[k]!),
+      (s, p, k) => Math.hypot(s.r[0] - circular[k]!.center[0], s.r[1] - circular[k]!.center[1]) - circular[k]!.radius - p.R))
+    candidates.push(earliest(pock, "ball_pocket", (s, _p, k) => pocketTime(s, _p, pockets[k]!),
+      (s, _p, k) => Math.hypot(s.r[0] - pockets[k]!.center[0], s.r[1] - pockets[k]!.center[1]) - pockets[k]!.radius))
+    let bb = NONE
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const idx = i * n + j
+        let v = pairT[idx]!
+        if (v !== v) {
+          const a = current(i)
+          const b = current(j)
+          if (isOutOfPlay(a.s) || isOutOfPlay(b.s) || (isNontranslating(a.s) && isNontranslating(b.s))) v = Infinity
+          else if (ballsOverlap(a, b, balls[i]!.p.R, balls[j]!.p.R)) v = t
+          else {
+            const gap = Math.hypot(a.r[0] - b.r[0], a.r[1] - b.r[1]) - balls[i]!.p.R - balls[j]!.p.R
+            v = gap > reach(i) + reach(j) || gap > relativeReach(i, j) ? Infinity : t + ballBallTime(a, balls[i]!.p, b, balls[j]!.p)
+          }
+          pairT[idx] = v
+        }
+        if (v < bb.time) bb = { type: "ball_ball", time: v, i, j }
+      }
+    }
+    candidates.push(bb)
 
-    const now = balls.map((b) => stateAt(b, t))
-    const min = (map: Map<string, number>, type: EventType, ids: (k: string) => string[]): Candidate => {
-      let best: Candidate = { type, time: Infinity, ids: [] }
-      for (const [k, v] of map) if (v < best.time) best = { type, time: v, ids: ids(k) }
-      return best
-    }
-
-    for (let i = 0; i < balls.length; i++) {
-      const b = balls[i]!
-      const s = now[i]!
-      for (const c of linear) {
-        const key = `${b.id}|${c.id}`
-        if (!linearTimes.has(key)) linearTimes.set(key, t + (isNontranslating(s.s) ? Infinity : linearCushionTime(s, b.p, c)))
-      }
-    }
-    candidates.push(min(linearTimes, "ball_linear_cushion", (k) => k.split("|")))
-    for (let i = 0; i < balls.length; i++) {
-      const b = balls[i]!
-      const s = now[i]!
-      for (const c of circular) {
-        const key = `${b.id}|${c.id}`
-        if (!circularTimes.has(key)) circularTimes.set(key, t + (isNontranslating(s.s) ? Infinity : circularCushionTime(s, b.p, c)))
-      }
-    }
-    candidates.push(min(circularTimes, "ball_circular_cushion", (k) => k.split("|")))
-    for (let i = 0; i < balls.length; i++) {
-      const b = balls[i]!
-      const s = now[i]!
-      for (const pk of pockets) {
-        const key = `${b.id}|${pk.id}`
-        if (!pocketTimes.has(key)) pocketTimes.set(key, t + (isNontranslating(s.s) ? Infinity : pocketTime(s, b.p, pk)))
-      }
-    }
-    candidates.push(min(pocketTimes, "ball_pocket", (k) => k.split("|")))
-    for (let i = 0; i < balls.length; i++) {
-      for (let j = i + 1; j < balls.length; j++) {
-        const key = `${i}|${j}`
-        if (pairTimes.has(key)) continue
-        const a = now[i]!
-        const b = now[j]!
-        let time: number
-        if (isOutOfPlay(a.s) || isOutOfPlay(b.s) || (isNontranslating(a.s) && isNontranslating(b.s))) time = Infinity
-        else if (ballsOverlap(a, b, balls[i]!.p.R, balls[j]!.p.R)) time = t
-        else time = t + ballBallTime(a, balls[i]!.p, b, balls[j]!.p)
-        pairTimes.set(key, time)
-      }
-    }
-    candidates.push(min(pairTimes, "ball_ball", (k) => k.split("|").map((x) => balls[+x]!.id)))
-
-    const tMin = Math.min(...candidates.map((c) => c.time))
-    if (tMin === Infinity) return { type: "none", time: Infinity, ids: [] }
+    let tMin = Infinity
+    for (const c of candidates) if (c.time < tMin) tMin = c.time
+    if (tMin === Infinity) return NONE
     const simultaneous = candidates.filter((c) => c.time === tMin)
     if (simultaneous.length === 1) return simultaneous[0]!
-    const priority = (c: Candidate): [number, number] => {
+    const priority = (c: Pending): [number, number] => {
       if (c.type === "stick_ball") return [1, shot.strike.V0 ** 2]
       if (c.type === "ball_ball") {
-        const [a, b] = c.ids.map((id) => byId.get(id)!)
-        const sa = stateAt(a!, t)
-        const sb = stateAt(b!, t)
-        const mu = (a!.p.m * b!.p.m) / (a!.p.m + b!.p.m)
-        return [4, 0.5 * mu * squaredNorm(sub(sa.v, sb.v))]
+        const [a, b] = [balls[c.i]!, balls[c.j]!]
+        const mu = (a.p.m * b.p.m) / (a.p.m + b.p.m)
+        return [4, 0.5 * mu * squaredNorm(sub(current(c.i).v, current(c.j).v))]
       }
-      const b = byId.get(c.ids[0]!)!
-      return [tier(c.type), energy(stateAt(b, t), b.p)]
+      return [tier(c.type), energy(current(c.i), balls[c.i]!.p)]
     }
     return simultaneous.reduce((best, c) => {
       const [tb, eb] = priority(best)
@@ -240,48 +342,53 @@ export function simulate(shot: Shot): ShotResult {
   }
 
   let truncated = false
-  for (let n = 0; ; n++) {
+  for (let count = 0; ; count++) {
     const ev = nextEvent()
     if (ev.time === Infinity) break
     t = ev.time
-    const involved = ev.type === "stick_ball" ? [ev.ids[1]!] : ev.type === "ball_ball" ? ev.ids : [ev.ids[0]!]
-    const pre = involved.map((id) => stateAt(byId.get(id)!, t))
+    const involved = ev.type === "ball_ball" ? [ev.i, ev.j] : [ev.i]
     let post: BallState[]
+    let ids: string[]
+    const bi = balls[ev.i]!
     switch (ev.type) {
-      case "stick_ball": {
-        const b = byId.get(ev.ids[1]!)!
-        post = [resolveStickBall(pre[0]!, b.p, shot.strike, cueSpecs, config.stickBall)]
+      case "stick_ball":
+        post = [resolveStickBall(current(ev.i), bi.p, shot.strike, cueSpecs, config.stickBall)]
+        ids = ["cue_stick", bi.id]
         struck = true
         break
-      }
       case "ball_ball": {
-        const [a, b] = ev.ids.map((id) => byId.get(id)!)
-        post = resolveBallBall(pre[0]!, pre[1]!, a!.p, b!.p, config.ballBall)
+        const bj = balls[ev.j]!
+        post = resolveBallBall(current(ev.i), current(ev.j), bi.p, bj.p, config.ballBall)
+        ids = [bi.id, bj.id]
         break
       }
       case "ball_linear_cushion":
-        post = [resolveLinearCushion(pre[0]!, linear.find((c) => c.id === ev.ids[1])!, byId.get(ev.ids[0]!)!.p, config.cushion)]
+        post = [resolveLinearCushion(current(ev.i), linear[ev.j]!, bi.p, config.cushion)]
+        ids = [bi.id, linear[ev.j]!.id]
         break
       case "ball_circular_cushion":
-        post = [resolveCircularCushion(pre[0]!, circular.find((c) => c.id === ev.ids[1])!, byId.get(ev.ids[0]!)!.p, config.cushion)]
+        post = [resolveCircularCushion(current(ev.i), circular[ev.j]!, bi.p, config.cushion)]
+        ids = [bi.id, circular[ev.j]!.id]
         break
       case "ball_pocket":
-        post = [resolvePocket(pockets.find((p) => p.id === ev.ids[1])!)]
+        post = [resolvePocket(pockets[ev.j]!)]
+        ids = [bi.id, pockets[ev.j]!.id]
         break
       default:
-        post = [applyTransition(pre[0]!, ev.type as TransitionType)]
+        post = [applyTransition(current(ev.i), ev.type as TransitionType)]
+        ids = [bi.id]
     }
     const states: Record<string, BallState> = {}
-    involved.forEach((id, k) => {
-      const b = byId.get(id)!
+    involved.forEach((i, k) => {
+      const b = balls[i]!
       b.start = post[k]!
       b.t0 = t
-      states[id] = cloneState(post[k]!)
-      refreshTransition(b)
+      states[b.id] = cloneState(post[k]!)
+      refreshTransition(i)
+      invalidate(i)
     })
-    invalidate(new Set(involved))
-    events.push({ type: ev.type, time: t, ids: ev.ids, states })
-    if (n + 1 >= maxEvents) {
+    events.push({ type: ev.type, time: t, ids, states })
+    if (count + 1 >= maxEvents) {
       truncated = true
       for (const b of balls) {
         const s = stateAt(b, t)

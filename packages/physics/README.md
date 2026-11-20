@@ -49,6 +49,7 @@ node test/accuracy-report.ts 300   # full report, quartic (slow: exact arithmeti
 DEGREE=3 node test/accuracy-report.ts 300   # cubic
 node test/speed-report.ts          # throughput and fallback rate per family
 node test/numpy-comparison.ts 300  # side by side with numpy.roots (needs tools/reference venv)
+node test/engine-bench.ts          # engine throughput on the fixture shots
 ```
 
 ## Reference fixtures
