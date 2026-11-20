@@ -1,5 +1,7 @@
 # PixelPoolHall
 
+[![CI](https://github.com/gehsekky/pixelpoolhall/actions/workflows/ci.yml/badge.svg)](https://github.com/gehsekky/pixelpoolhall/actions/workflows/ci.yml)
+
 The goal: the most accurate web billiards simulator on the internet. Free,
 self-hosted, MIT licensed.
 

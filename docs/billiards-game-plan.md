@@ -94,7 +94,8 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 ## Roadmap
 
 ### Phase 0: Foundations
-- ✅ Repo: pnpm workspace, TypeScript, Vitest, oxlint (`packages/physics`, `packages/game`, `packages/web`). Still to do: CI.
+- ✅ Repo: pnpm workspace, TypeScript, Vitest, oxlint (`packages/physics`, `packages/game`, `packages/web`).
+- ✅ CI (`.github/workflows/ci.yml`): lint, typecheck, tests and the web build on every push to `main` and every pull request. Public repo: https://github.com/gehsekky/pixelpoolhall.
 - ✅ MIT `LICENSE` (copyright gehsekky) and `THIRD_PARTY_NOTICES.md`.
 - ✅ Our own quadratic, cubic and quartic solvers, verified against exact roots. See physics-design.md, "Root solving".
 - ✅ Compared with NumPy `roots` (LAPACK): ours is more accurate on every test family, and NumPy loses all accuracy on 43% of wide-range cases. The Python reference environment lives in `tools/reference`.
