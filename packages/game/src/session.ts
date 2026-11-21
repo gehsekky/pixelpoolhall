@@ -6,6 +6,7 @@
 import {
   buildPocketTable,
   DEFAULT_BALL_PARAMS,
+  DEFAULT_MODEL_CONFIG,
   MotionState,
   simulate,
   trajectories,
@@ -13,6 +14,7 @@ import {
   type BallParams,
   type BallState,
   type CueStrike,
+  type ModelConfig,
   type ShotResult,
   type Table,
   type TableSpec,
@@ -34,6 +36,14 @@ export interface GameOptions {
   firstBreaker?: Player
   /** Physics dimensionality: "3d" (default; jumps, hops, balls leaving the table) or "2d". */
   dim?: "2d" | "3d"
+  /** Collision models. Default: the closed-form ones. */
+  models?: Partial<CollisionModels> | undefined
+}
+
+/** Which collision models the physics uses (see the physics package's ModelConfig). */
+export interface CollisionModels {
+  ballBall: ModelConfig["ballBall"]["model"]
+  cushion: ModelConfig["cushion"]["model"]
 }
 
 export interface ShotOptions {
@@ -49,6 +59,7 @@ export interface GameSnapshot {
   balls: [string, BallState][]
   score: [number, number]
   dim: "2d" | "3d"
+  models?: CollisionModels
 }
 
 export interface Preview {
@@ -81,6 +92,8 @@ export class Game {
   readonly params: BallParams
   readonly discipline: Discipline
   readonly dim: "2d" | "3d"
+  readonly models: CollisionModels
+  private readonly config: ModelConfig
   state: GameState
   /** Balls on the table (the cue ball is absent only between a scratch and its placement). */
   balls = new Map<string, BallState>()
@@ -92,6 +105,15 @@ export class Game {
   constructor(opts: GameOptions) {
     this.discipline = opts.discipline
     this.dim = opts.dim ?? "3d"
+    this.models = {
+      ballBall: opts.models?.ballBall ?? DEFAULT_MODEL_CONFIG.ballBall.model,
+      cushion: opts.models?.cushion ?? DEFAULT_MODEL_CONFIG.cushion.model,
+    }
+    this.config = {
+      ...DEFAULT_MODEL_CONFIG,
+      ballBall: { ...DEFAULT_MODEL_CONFIG.ballBall, model: this.models.ballBall },
+      cushion: { ...DEFAULT_MODEL_CONFIG.cushion, model: this.models.cushion },
+    }
     this.spec = opts.table ?? WPA_9FT
     this.params = opts.ballParams ?? DEFAULT_BALL_PARAMS
     this.table = buildPocketTable(this.spec)
@@ -119,12 +141,13 @@ export class Game {
       balls: [...this.balls].map(([id, b]) => [id, structuredClone(b)]),
       score: [...this.score],
       dim: this.dim,
+      models: { ...this.models },
     }
   }
 
   /** A game at a snapshot's position. */
   static fromSnapshot(snap: GameSnapshot): Game {
-    const g = new Game({ discipline: snap.discipline, table: snap.spec, ballParams: snap.params, rules: snap.state.rules, dim: snap.dim })
+    const g = new Game({ discipline: snap.discipline, table: snap.spec, ballParams: snap.params, rules: snap.state.rules, dim: snap.dim, models: snap.models })
     g.state = structuredClone(snap.state)
     g.balls = new Map(snap.balls.map(([id, b]) => [id, structuredClone(b)]))
     g.score = [...snap.score]
@@ -161,6 +184,7 @@ export class Game {
       cueBall: CUE,
       strike,
       dim: this.dim,
+      config: this.config,
     }
     const result = simulate(shot)
     const traj = trajectories(shot, result)

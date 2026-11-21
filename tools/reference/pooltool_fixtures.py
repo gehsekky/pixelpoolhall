@@ -1,9 +1,14 @@
 """Export pooltool simulations as JSON fixtures for our engine's tests.
 
-    tools/reference/.venv/bin/python -I tools/reference/pooltool_fixtures.py [--3d] [out_dir]
+    tools/reference/.venv/bin/python -I tools/reference/pooltool_fixtures.py [--3d | --mathavan] [out_dir]
 
 Writes one file per shot category to packages/physics/test/fixtures/pooltool/
-(or, with --3d, pooltool's 3D engine to fixtures/pooltool3d/; or out_dir).
+(or, with --3d, pooltool's 3D engine to fixtures/pooltool3d/; with
+--mathavan, the 2D engine with Mathavan's ball-ball (2014) and ball-cushion
+(2010) models to fixtures/pooltool-mathavan/; or out_dir). The Mathavan
+models are pooltool's with a fix for contacts with zero slip, see
+mathavan_patched.py; --mathavan also writes fixtures/mathavan-core.json,
+the models' core solvers on random inputs, unpatched and patched.
 The 3D export runs every 2D category plus "jump" (airborne balls). Each file holds everything needed to replay the shots without
 pooltool: the physics models and their parameters, the table geometry as
 pooltool builds it, each ball's parameters and starting state, the cue strike,
@@ -45,6 +50,9 @@ from pooltool.objects.ball.datatypes import Ball
 from pooltool.objects.table.collection import default_specs_from_table_type
 from pooltool.objects.table.specs import TableType
 from pooltool.physics.resolve.resolver import default_resolver, default_resolver_3d
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mathavan_patched  # noqa: E402
 from pooltool.serialize import SerializeFormat, conversion
 
 SCHEMA = 1
@@ -52,12 +60,26 @@ POOLTOOL_COMMIT = "9e819eb13995b8764226d6da98069b7fd6e14302"
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = REPO / "packages/physics/test/fixtures/pooltool"
 DEFAULT_OUT_3D = REPO / "packages/physics/test/fixtures/pooltool3d"
+DEFAULT_OUT_MATHAVAN = REPO / "packages/physics/test/fixtures/pooltool-mathavan"
 MAX_EVENTS = 2000
+FLAGS = ("--3d", "--mathavan")
 IS_3D = "--3d" in sys.argv[1:]
+MATHAVAN = "--mathavan" in sys.argv[1:]
 
 
 def make_resolver():
-    return default_resolver_3d() if IS_3D else default_resolver()
+    if IS_3D:
+        return default_resolver_3d()
+    resolver = default_resolver()
+    if MATHAVAN:
+        # pooltool's Mathavan models (2D only, their own defaults), patched.
+        resolver = attrs.evolve(
+            resolver,
+            ball_ball=mathavan_patched.PatchedFrictionalMathavan(),
+            ball_linear_cushion=mathavan_patched.PatchedMathavan2010Linear(),
+            ball_circular_cushion=mathavan_patched.PatchedMathavan2010Circular(),
+        )
+    return resolver
 
 
 def engine() -> SimulationEngine:
@@ -350,6 +372,51 @@ def table_geometry() -> dict:
     }
 
 
+def mathavan_core_cases() -> dict:
+    """The patched Mathavan core solvers on random inputs, a third of them
+    rolling balls (zero slip on the cloth)."""
+    rng = np.random.default_rng(7)
+    p = Ball.create("x").params
+    h = TABLE.cushion_segments.linear["3"].height
+    u = rng.uniform
+    cushion, ball_ball = [], []
+    for i in range(300):
+        rolling = i % 3 == 2
+        vx, vy = u(-1.5, 1.5), u(0.05, 3.0)
+        wz = u(-60, 60)
+        # Local frame: cloth slip (vx - R wy, vy + R wx); rolling makes it zero.
+        wx, wy = (-vy / p.R, vx / p.R) if rolling else (u(-80, 80), u(-80, 80))
+        args = (p.m, p.R, h, p.e_c, p.u_s, p.f_c, vx, vy, wx, wy, wz, 1000, 0.001)
+        out = mathavan_patched.solve(*args)
+        cushion.append({"input": list(args), "rolling": rolling, "output": [float(x) for x in out]})
+    for i in range(300):
+        rolling = i % 3 == 2
+        ang = u(0, 2 * math.pi)
+        r_i = np.array([0.5, 1.0, p.R])
+        r_j = r_i + (2 * p.R + 1e-6) * np.array([math.cos(ang), math.sin(ang), 0.0])
+        # Ball i moves toward j (within 80 degrees of the line of centers).
+        dirn = ang + u(-1.4, 1.4)
+        speed = u(0.1, 6.0)
+        v_i = speed * np.array([math.cos(dirn), math.sin(dirn), 0.0])
+        v_j = np.array([u(-0.3, 0.3), u(-0.3, 0.3), 0.0]) if i % 2 else np.zeros(3)
+        if rolling:
+            w_i = np.array([-v_i[1] / p.R, v_i[0] / p.R, u(-40, 40)])
+            w_j = np.array([-v_j[1] / p.R, v_j[0] / p.R, 0.0])
+        else:
+            w_i = np.array([u(-80, 80), u(-80, 80), u(-60, 60)])
+            w_j = np.array([u(-20, 20), u(-20, 20), u(-20, 20)])
+        u_b = u(0.01, 0.12)
+        out = mathavan_patched._collide_balls(r_i, v_i, w_i, r_j, v_j, w_j, p.R, p.m, p.u_s, p.u_s, u_b, p.e_b, 1000)
+        ball_ball.append({
+            "input": {"r_i": floats(r_i), "v_i": floats(v_i), "w_i": floats(w_i), "r_j": floats(r_j),
+                      "v_j": floats(v_j), "w_j": floats(w_j), "R": p.R, "M": p.m, "u_s": p.u_s,
+                      "u_b": u_b, "e_b": p.e_b, "iterations": 1000},
+            "rolling": rolling,
+            "output": [floats(x) for x in out],
+        })
+    return {"cushion": cushion, "ball_ball": ball_ball}
+
+
 def main() -> None:
     if sys.flags.hash_randomization:
         # Set iteration order (used by pooltool's rack generator) depends on the
@@ -357,15 +424,25 @@ def main() -> None:
         # isolation of -I, which would ignore PYTHONHASHSEED (-E).
         os.execve(sys.executable, [sys.executable, "-P", "-s", __file__, *sys.argv[1:]],
                   {**os.environ, "PYTHONHASHSEED": "0"})
-    args = [a for a in sys.argv[1:] if a != "--3d"]
-    out_dir = Path(args[0]) if args else (DEFAULT_OUT_3D if IS_3D else DEFAULT_OUT)
+    args = [a for a in sys.argv[1:] if a not in FLAGS]
+    default_out = DEFAULT_OUT_3D if IS_3D else DEFAULT_OUT_MATHAVAN if MATHAVAN else DEFAULT_OUT
+    out_dir = Path(args[0]) if args else default_out
     out_dir.mkdir(parents=True, exist_ok=True)
     header = {
         "schema": SCHEMA,
         "generator": {"pooltool": version("pooltool-billiards"), "commit": POOLTOOL_COMMIT,
                       "numpy": np.__version__},
     }
-    shared = {"engine": {"is_3d": IS_3D, "resolver": to_plain(make_resolver())},
+    engine_info = {"is_3d": IS_3D, "resolver": to_plain(make_resolver())}
+    if MATHAVAN:
+        engine_info["patched"] = "tools/reference/mathavan_patched.py (no friction at zero slip)"
+        core = {**header, "description": "Mathavan core solvers: cushion solve(M, R, h, e_c, u_s, f_c, "
+                "vx, vy, wx, wy, wz, max_steps, delta_p) -> (vx, vy, wx, wy, wz) in the cushion frame; "
+                "ball-ball _collide_balls -> [v_i, w_i, v_j, w_j]", **mathavan_core_cases()}
+        core_path = out_dir.parent / "mathavan-core.json"
+        core_path.write_text(json.dumps(core, allow_nan=False, separators=(",", ":")) + "\n")
+        print(f"core: {len(core['cushion'])} cushion, {len(core['ball_ball'])} ball-ball -> {core_path}")
+    shared = {"engine": engine_info,
               "table": table_geometry()}
     for category, (description, shots) in (CATEGORIES_3D if IS_3D else CATEGORIES).items():
         exported, failed = [], []

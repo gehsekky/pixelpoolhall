@@ -2,7 +2,8 @@
  * Collision resolvers checked against every collision in the pooltool
  * fixtures, in isolation from detection: each involved ball's last recorded
  * state is evolved to the event time, resolved, and compared with pooltool's
- * post-event state.
+ * post-event state. Runs on the default-model fixtures and on the ones made
+ * with Mathavan's ball-ball and cushion models.
  */
 import { describe, expect, it } from "vitest"
 import { evolve, type BallState } from "../src/motion.ts"
@@ -11,13 +12,12 @@ import { resolveCircularCushion, resolveLinearCushion } from "../src/resolve/cus
 import { resolvePocket } from "../src/resolve/pocket.ts"
 import { resolveStickBall } from "../src/resolve/stick-ball.ts"
 import { stateError, toCueSpecs, toModelConfig, toParams, toState, toTable } from "./support/fixture-convert.ts"
-import { loadFixtures, type FixtureEvent } from "./support/pooltool-fixtures.ts"
-
-const files = loadFixtures()
+import { loadFixtures, type FixtureEvent, type FixtureFile } from "./support/pooltool-fixtures.ts"
 
 interface Stat { n: number; worst: number; where: string; failures: string[] }
-const stats = new Map<string, Stat>()
 
+function check(files: FixtureFile[], tolerance: number): Map<string, Stat> {
+const stats = new Map<string, Stat>()
 for (const file of files) {
   const table = toTable(file)
   const config = toModelConfig(file)
@@ -42,7 +42,7 @@ for (const file of files) {
             st.worst = err
             st.where = `${file.category}/${shot.name} t=${e.time}`
           }
-          if (err > 1e-8 || s.s !== e.states[id]!.s) st.failures.push(`${file.category}/${shot.name} ${e.type} t=${e.time} ${id}: err ${err}, state ${s.s} vs ${e.states[id]!.s}`)
+          if (err > tolerance || s.s !== e.states[id]!.s) st.failures.push(`${file.category}/${shot.name} ${e.type} t=${e.time} ${id}: err ${err}, state ${s.s} vs ${e.states[id]!.s}`)
         }
         stats.set(e.type, st)
       }
@@ -71,13 +71,24 @@ for (const file of files) {
   }
 }
 
-describe("collision resolvers vs pooltool fixtures", () => {
-  for (const type of ["stick_ball", "ball_ball", "ball_linear_cushion", "ball_circular_cushion", "ball_pocket"]) {
-    it(type, () => {
-      const st = stats.get(type)!
-      console.log(`${type}: ${st.n} states, worst relative error ${st.worst.toExponential(2)} (${st.where}), failures ${st.failures.length}`)
-      expect(st.n).toBeGreaterThan(0)
-      expect(st.failures.slice(0, 8)).toEqual([])
-    })
-  }
-})
+return stats
+}
+
+const sets = [
+  { name: "default models", files: loadFixtures(), tolerance: 1e-8 },
+  { name: "Mathavan models", files: loadFixtures("mathavan"), tolerance: 1e-8 },
+]
+
+for (const set of sets) {
+  describe(`collision resolvers vs pooltool fixtures (${set.name})`, () => {
+    const stats = check(set.files, set.tolerance)
+    for (const type of ["stick_ball", "ball_ball", "ball_linear_cushion", "ball_circular_cushion", "ball_pocket"]) {
+      it(type, () => {
+        const st = stats.get(type)!
+        console.log(`${set.name} ${type}: ${st.n} states, worst relative error ${st.worst.toExponential(2)} (${st.where}), failures ${st.failures.length}`)
+        expect(st.n).toBeGreaterThan(0)
+        expect(st.failures.slice(0, 8)).toEqual([])
+      })
+    }
+  })
+}

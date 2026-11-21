@@ -23,12 +23,14 @@ Before adding anything here, check the licensing policy in
   - `packages/physics/src/resolve/ball-table.ts`: frictional inelastic ball–table landing (Alciatore TP A-14) and the off-table freeze.
   - `packages/physics/src/resolve/stronge.ts`: Stronge compliant collision. Uses our own root finder, with a corrected bracket for the slip-resume time.
   - `packages/physics/src/resolve/cushion.ts`: applying the Stronge model to rails and jaws, plus `make_kiss` placement.
+  - `packages/physics/src/resolve/mathavan.ts`: Mathavan's ball–ball (2014) and ball–cushion (2010) impulse integration, from pooltool's `frictional_mathavan` and `mathavan_2010`. Changed where the result depended on rounding noise: no friction at zero slip, a partial last restitution step, and friction capped so a contact can stick.
   - `packages/physics/src/table-builder.ts`: pocket-table geometry (rails, jaws, pockets) and the default 7-ft table specs.
+- **Copied file (reference tooling, not shipped).** `tools/reference/mathavan_patched.py` copies pooltool's Mathavan ball–ball and ball–cushion solvers (Python) with the same three changes, each marked `PATCH`. It is used only to generate test fixtures.
 - pooltool has no NOTICE file. Its default parameter values appear in `packages/physics/src/params.ts`.
 
 ## Reference data
 
-- `packages/physics/test/fixtures/pooltool/*.json` and `pooltool3d/*.json`: simulation output generated
+- `packages/physics/test/fixtures/pooltool/*.json`, `pooltool3d/*.json`, `pooltool-mathavan/*.json` and `mathavan-core.json`: simulation output generated
   by running pooltool (https://github.com/ekiefl/pooltool, Apache-2.0, Copyright
   Evan Kiefl) through `tools/reference/pooltool_fixtures.py`. Test data only. It
   contains no pooltool code and is not shipped.

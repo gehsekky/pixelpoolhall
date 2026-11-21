@@ -13,6 +13,7 @@ import { classify, isNontranslating, MotionState, type BallState } from "../moti
 import type { BallParams, ModelConfig } from "../params.ts"
 import { unitAxis, type CircularCushion, type LinearCushion } from "../table.ts"
 import { MIN_DIST } from "./ball-ball.ts"
+import { mathavanCushion } from "./mathavan.ts"
 import { resolveCompliantCollision } from "./stronge.ts"
 
 /** make_kiss falls back to normal placement if the velocity-based move exceeds this many MIN_DISTs. */
@@ -114,14 +115,41 @@ function finish(r: Vec3, v: Vec3, w: Vec3, p: BallParams, threeD: boolean): Ball
   return { r, v, w, s: classify(r, v, w, p) }
 }
 
+/**
+ * pooltool's in-plane rail normal, from the rail's line toward the ball,
+ * built from the line's general form (l_x x + l_y y + l_0 = 0).
+ */
+function linearNormalXY(c: LinearCushion, r: Vec3): Vec3 {
+  const [p1x, p1y] = c.p1
+  const [p2x, p2y] = c.p2
+  const vertical = p2x - p1x === 0
+  const lx = vertical ? 1 : -(p2y - p1y) / (p2x - p1x)
+  const ly = vertical ? 0 : 1
+  const l0 = vertical ? -p1x : ((p2y - p1y) / (p2x - p1x)) * p1x - p1y
+  const n = unit([lx, ly, 0])
+  return lx * r[0] + ly * r[1] + l0 >= 0 ? n : scale(n, -1)
+}
+
+/** Mathavan's model at a contact whose in-plane normal (cushion to ball) is n. */
+function mathavan(b: BallState, r: Vec3, n: Vec3, h: number, p: BallParams, config: ModelConfig["cushion"], threeD: boolean): BallState {
+  const out = mathavanCushion(r, b.v, b.w, scale(n, -1), p.m, p.R, {
+    e_c: p.e_c, f_c: p.f_c, u_s: p.u_s, h, maxSteps: config.maxSteps, deltaP: config.deltaP,
+  })
+  return finish(out.r, out.v, out.w, p, threeD)
+}
+
 export function resolveLinearCushion(b: BallState, c: LinearCushion, p: BallParams, config: ModelConfig["cushion"], threeD = false): BallState {
   const r = makeKissLinear(b, c, p.R)
+  if (config.model === "mathavan" && b.s !== MotionState.airborne) return mathavan(b, r, linearNormalXY(c, r), c.p1[2], p, config, threeD)
   const { v, w } = strongeImpulse({ ...b, r }, linearNormal(c, r), p, config.omegaRatio)
   return finish(r, v, w, p, threeD)
 }
 
 export function resolveCircularCushion(b: BallState, c: CircularCushion, p: BallParams, config: ModelConfig["cushion"], threeD = false): BallState {
   const r = makeKissCircular(b, c, p.R)
+  if (config.model === "mathavan" && b.s !== MotionState.airborne) {
+    return mathavan(b, r, unit([r[0] - c.center[0], r[1] - c.center[1], 0]), c.center[2], p, config, threeD)
+  }
   let n = circularNormal(c, r)
   // pooltool's jaw normal points from a point at cushion height, so it tilts
   // vertically, while jaw contact is detected in the table plane. In 3D a

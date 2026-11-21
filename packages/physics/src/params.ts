@@ -59,12 +59,32 @@ export const DEFAULT_CUE_SPECS: Readonly<CueSpecs> = { M: 0.567, end_mass: 0.005
 
 export interface ModelConfig {
   ballBall: {
+    /**
+     * "frictional_inelastic": closed-form impulse (Alciatore TP A-5/A-6/A-14).
+     * "mathavan": Mathavan et al. 2014, integrated in impulse steps; includes
+     * the cloth's friction during the impact. Balls in the air always use
+     * the closed form.
+     */
+    model: "frictional_inelastic" | "mathavan"
     /** Speed-dependent throw friction u_b = a + b exp(-c v_rel) (Alciatore TP A-14). */
     friction: { a: number; b: number; c: number }
+    /** Mathavan: about how many impulse steps a collision takes. */
+    iterations: number
   }
   cushion: {
+    /**
+     * "stronge": Stronge's compliant impact at the nose (closed form).
+     * "mathavan": Mathavan et al. 2010, integrated in impulse steps; includes
+     * the cloth's friction during the impact. A ball in the air always uses
+     * Stronge's model.
+     */
+    model: "stronge" | "mathavan"
     /** Stronge compliant model: tangential/normal frequency ratio, in (1, 2). */
     omegaRatio: number
+    /** Mathavan: maximum number of impulse steps in compression. */
+    maxSteps: number
+    /** Mathavan: smallest impulse step, N·s. */
+    deltaP: number
   }
   stickBall: {
     englishThrottle: number
@@ -77,8 +97,8 @@ export interface ModelConfig {
 }
 
 export const DEFAULT_MODEL_CONFIG: Readonly<ModelConfig> = {
-  ballBall: { friction: { a: 0.009951, b: 0.108, c: 1.088 } },
-  cushion: { omegaRatio: 1.8 },
+  ballBall: { model: "frictional_inelastic", friction: { a: 0.009951, b: 0.108, c: 1.088 }, iterations: 1000 },
+  cushion: { model: "stronge", omegaRatio: 1.8, maxSteps: 1000, deltaP: 0.001 },
   stickBall: { englishThrottle: 1, squirtThrottle: 1 },
   ballTable: { minBounceHeight: 0.005 },
 }

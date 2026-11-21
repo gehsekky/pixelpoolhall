@@ -26,6 +26,7 @@ import {
 } from "../math/vec3.ts"
 import { classify, EPS, isNontranslating, MotionState, type BallState } from "../motion.ts"
 import type { BallParams, ModelConfig } from "../params.ts"
+import { mathavanBallBall } from "./mathavan.ts"
 
 /** Gap pooltool leaves between bodies after resolving a contact (const.MIN_DIST). */
 export const MIN_DIST = 1e-6
@@ -212,8 +213,12 @@ export function resolveBallBall(
   const k1 = { ...b1, r: r1 }
   const k2 = { ...b2, r: r2 }
   const u_b = throwFriction(k1, k2, p1, p2, config.friction)
-  const n = unit(sub(r2, r1))
-  const res = impulse(k1.v, k1.w, k2.v, k2.w, n, p1.R, u_b, (p1.e_b + p2.e_b) / 2)
+  const e_b = (p1.e_b + p2.e_b) / 2
+  const onCloth = b1.s !== MotionState.airborne && b2.s !== MotionState.airborne
+  const res =
+    config.model === "mathavan" && onCloth
+      ? mathavanBallBall(r1, k1.v, k1.w, r2, k2.v, k2.w, p1.R, p1.m, { u_b, e_b, u_s1: p1.u_s, u_s2: p2.u_s, iterations: config.iterations })
+      : impulse(k1.v, k1.w, k2.v, k2.w, unit(sub(r2, r1)), p1.R, u_b, e_b)
   if (!threeD) {
     res.v1[2] = 0
     res.v2[2] = 0

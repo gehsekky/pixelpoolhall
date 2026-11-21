@@ -179,8 +179,8 @@ Each interaction is an interface with selectable implementations. The defaults a
 | Interaction | Models | Source |
 |---|---|---|
 | Cue → ball | **Instantaneous point contact** (cue mass, tip radius, elevation, tip offset) + **squirt** | Alciatore TP A-30, TP A-31; pooltool |
-| Ball–ball | **Frictional inelastic impulse with speed-dependent throw friction** `μ = a + b·e^(−c·v_rel)` (a=0.00995, b=0.108, c=1.088); Mathavan 2014 (numerical, high accuracy); frictionless elastic (for testing) | Alciatore TP A-14; Mathavan et al. 2014 |
-| Ball–cushion (straight and jaw) | **Stronge compliant** (closed form); Mathavan 2010; Han 2005 | Stronge 2018; Mathavan et al. 2010; Han 2005 |
+| Ball–ball | **Frictional inelastic impulse with speed-dependent throw friction** `μ = a + b·e^(−c·v_rel)` (a=0.00995, b=0.108, c=1.088); Mathavan 2014 (numerical, built: `ballBall.model: "mathavan"`) | Alciatore TP A-14; Mathavan et al. 2014 |
+| Ball–cushion (straight and jaw) | **Stronge compliant** (closed form); Mathavan 2010 (numerical, built: `cushion.model: "mathavan"`); Han 2005 | Stronge 2018; Mathavan et al. 2010; Han 2005 |
 | Ball–table landing | **Frictional inelastic** | Alciatore TP A-14 |
 | Ball–pocket | Phase 1: **capture circle** (as in pooltool). Phase 3: **interior model** (see below) | — |
 
@@ -249,6 +249,34 @@ This follows pooltool's layout approach, re-implemented in TypeScript with Apach
 - **Speed:** 0.05–0.17 ms for typical shots and 3.7 ms for a break, about 1.5–2× the 2D cost. Hops add events.
 
 The game plays in 3D by default (`GameOptions.dim`).
+
+### Mathavan collision models (Phase 3, as built 2026-11-20)
+
+Selectable with `config.ballBall.model = "mathavan"` and `config.cushion.model = "mathavan"` (`GameOptions.models` in the game); `src/resolve/mathavan.ts`. Both integrate the impact in small steps of normal impulse, so friction at every contact acts throughout it:
+
+- **Ball–ball** (Mathavan, Jackson & Parkin 2014): the contact between the balls, and each ball's contact with the cloth, which the ball–ball friction presses down or lifts. About 1,000 steps. Restitution applies to the normal work (Stronge's energetic coefficient). Throw friction is Alciatore's speed-dependent `μ`, as in the default model.
+- **Ball–cushion** (Mathavan, Jackson & Parkin 2010): contact with the cushion above the equator, at the nose height, and with the cloth below. Both slip and rub. Steps of 0.001 N·s.
+- Both assume the balls are on the cloth. In 3D, a ball in the air falls back to the closed-form models.
+
+**Port, and three fixes to pooltool's implementations.** pooltool's code (Apache-2.0) is the reference; ours follows it step for step, with three changes. Each one replaces a step whose result pooltool leaves to rounding noise:
+
+1. **Zero slip.** Friction needs a slip direction. For a rolling ball, the slip on the cloth is zero, and pooltool takes its direction from `atan2` of noise. A 1-ulp change in a rolling ball's speed then moved its rebound off a rail by 3e-4 m/s. Ours applies no friction for that step when the slip is below 1e-9 m/s.
+2. **Restitution end (ball–ball).** pooltool's step size makes a frictionless collision land exactly on the stopping threshold. Rounding then decides whether it takes one more step, which gives 0.2% more rebound, in about half of all collisions. Ours ends with a partial step that delivers about the remaining work, as pooltool's cushion model already does.
+3. **Sticking.** Once a contact's slip reaches zero, full-size friction steps chatter across zero, each in a direction set by noise. In a straight draw shot that sent the object ball sideways at ±1e-4 m/s. Ours caps each step's friction at what brings that slip to zero: 7/M per unit impulse between balls, 3.5/M at the cushion and at the cloth. The surfaces stick instead.
+
+All three are O(step size), the model's own discretization error, and they make the result a continuous function of the input. That matters for reproducibility across machines and for the AI's aim solver. The reference fixtures come from pooltool with the same three patches (`tools/reference/mathavan_patched.py`, each change marked).
+
+**Results:**
+- **Core solvers** (`test/mathavan.test.ts`): 300 random cushion impacts and 300 random ball–ball collisions, a third of them rolling, all within 1e-12 of the reference.
+  - **Conditioning:** a 1-ulp input change moves the output by about 1 ulp.
+  - **Restitution:** head-on without friction, it is exactly `e`.
+  - **Convergence:** halving the step halves the error. At 1,000 steps, ball–ball is within 0.5% of the converged result.
+- **Whole shots** (`test/engine.test.ts`, `test/resolve.test.ts`): all 279 2D fixture shots re-run with both models, 6,256 events.
+  - Every event sequence matches pooltool's.
+  - Times are within 9.7e-10 s and states within 3.1e-9. Breaks are within 1.0e-7 s.
+  - Final positions are within 35 nm.
+  - Each collision resolved alone matches within 1.5e-12.
+- **Speed:** 2–3× the default models: 0.15–0.3 ms for typical shots, 4.1 ms for a break. A hard AI plan takes about 100 ms on average.
 
 ### Pockets (Phase 3 interior model)
 

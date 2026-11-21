@@ -23,9 +23,21 @@ export function toTable(f: FixtureFile): Table {
 export function toModelConfig(f: FixtureFile): ModelConfig {
   const r = f.engine.resolver as Record<string, Record<string, unknown>>
   const friction = r.ball_ball!.friction as { a: number; b: number; c: number }
+  const cushion = r.ball_linear_cushion!
+  if (r.ball_circular_cushion!.model !== cushion.model) throw new Error("mixed cushion models are not supported")
+  const mathavanCushion = cushion.model === "mathavan_2010"
   return {
-    ballBall: { friction: { a: friction.a, b: friction.b, c: friction.c } },
-    cushion: { omegaRatio: r.ball_linear_cushion!.omega_ratio as number },
+    ballBall: {
+      model: r.ball_ball!.model === "frictional_mathavan" ? "mathavan" : "frictional_inelastic",
+      friction: { a: friction.a, b: friction.b, c: friction.c },
+      iterations: (r.ball_ball!.num_iterations as number | undefined) ?? 1000,
+    },
+    cushion: {
+      model: mathavanCushion ? "mathavan" : "stronge",
+      omegaRatio: (cushion.omega_ratio as number | undefined) ?? 1.8,
+      maxSteps: (cushion.max_steps as number | undefined) ?? 1000,
+      deltaP: (cushion.delta_p as number | undefined) ?? 0.001,
+    },
     stickBall: {
       englishThrottle: r.stick_ball!.english_throttle as number,
       squirtThrottle: r.stick_ball!.squirt_throttle as number,

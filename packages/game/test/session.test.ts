@@ -129,4 +129,15 @@ describe("game session", () => {
     const next = { V0: 2, phi: 30, theta: 0, a: 0, b: 0.2 }
     expect(copy.preview(next).after).toEqual(g.preview(next).after)
   })
+
+  it("plays with Mathavan's collision models, and keeps them through a snapshot", () => {
+    const g = new Game({ discipline: "9-ball", seed: 4, models: { ballBall: "mathavan", cushion: "mathavan" } })
+    const strike = { V0: 8, phi: aim(g.balls.get(CUE)!, g.layout.footSpot) + 0.2, theta: 0, a: 0, b: 0.1 }
+    const plain = new Game({ discipline: "9-ball", seed: 4 })
+    const a = g.preview(strike).result.final
+    expect(a).not.toEqual(plain.preview(strike).result.final)
+    const copy = Game.fromSnapshot(JSON.parse(JSON.stringify(g.snapshot())))
+    expect(copy.models).toEqual({ ballBall: "mathavan", cushion: "mathavan" })
+    expect(copy.preview(strike).result.final).toEqual(a)
+  })
 })

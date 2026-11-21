@@ -41,6 +41,7 @@ DEGREE=3 node test/numpy-comparison.ts 300   # cubic
 ```sh
 tools/reference/.venv/bin/python -I tools/reference/pooltool_fixtures.py        # 2D, fixtures/pooltool/
 tools/reference/.venv/bin/python -I tools/reference/pooltool_fixtures.py --3d   # 3D, fixtures/pooltool3d/
+tools/reference/.venv/bin/python -I tools/reference/pooltool_fixtures.py --mathavan  # Mathavan models, fixtures/pooltool-mathavan/
 ```
 
 This writes one JSON file per shot category to
@@ -56,6 +57,12 @@ This writes one JSON file per shot category to
 | frozen | ball frozen to a rail; frozen two-ball combinations |
 | break | 9-ball and 8-ball breaks |
 | random | seeded random layouts of 2–6 balls |
+
+`--mathavan` re-runs the 2D categories with pooltool's Mathavan ball–ball and
+ball–cushion models, patched where their result depended on rounding noise
+(`mathavan_patched.py`, a marked copy of pooltool's solvers; see
+docs/physics-design.md, "Mathavan collision models"). It also writes
+`fixtures/mathavan-core.json`: the patched core solvers on random inputs.
 
 The schema is documented at the top of `pooltool_fixtures.py`, and
 `packages/physics/test/support/pooltool-fixtures.ts` has the matching types.

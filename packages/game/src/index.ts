@@ -16,7 +16,7 @@ export { decide, judge, newRack } from "./rules/index.ts"
 export { EIGHT, groupOf, legalTargets, SOLIDS, STRIPES } from "./rules/eight-ball.ts"
 export { lowestBall, NINE, NINE_BALLS } from "./rules/nine-ball.ts"
 export { FOUL_TEXT } from "./rules/common.ts"
-export { Game, type GameOptions, type GameSnapshot, type Preview, type ShotOptions, type ShotRecord } from "./session.ts"
+export { Game, type CollisionModels, type GameOptions, type GameSnapshot, type Preview, type ShotOptions, type ShotRecord } from "./session.ts"
 export {
   AI_LEVELS,
   bankCandidates,
