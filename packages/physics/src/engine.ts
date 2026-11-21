@@ -28,6 +28,8 @@ import {
   linearCushionTime,
   linearCushionTime3D,
   offTableTime,
+  PocketEvent,
+  pocketInteriorTime,
   pocketTime,
 } from "./detect.ts"
 import { squaredNorm, sub, ZERO } from "./math/vec3.ts"
@@ -47,7 +49,7 @@ import { DEFAULT_CUE_SPECS, DEFAULT_MODEL_CONFIG, type BallParams, type CueSpecs
 import { resolveBallBall } from "./resolve/ball-ball.ts"
 import { resolveBallTable, resolveOffTable } from "./resolve/ball-table.ts"
 import { resolveCircularCushion, resolveLinearCushion } from "./resolve/cushion.ts"
-import { resolvePocket } from "./resolve/pocket.ts"
+import { resolveDrop, resolvePocket, resolvePocketEdge } from "./resolve/pocket.ts"
 import { resolveStickBall, type CueStrike } from "./resolve/stick-ball.ts"
 import { lineCoefficients, type Table } from "./table.ts"
 
@@ -60,6 +62,9 @@ export type EventType =
   | "ball_pocket"
   | "ball_table"
   | "ball_off_table"
+  /** Pocket interiors (3D): center over the edge of the slate cut; hitting the edge. */
+  | "ball_drop"
+  | "ball_pocket_edge"
   | TransitionType
 
 export interface SimEvent {
@@ -122,6 +127,8 @@ function tier(type: EventType): number {
     case "stick_ball":
       return 1
     case "ball_pocket":
+    case "ball_drop":
+    case "pivoting_airborne":
     case "sliding_rolling":
     case "rolling_spinning":
     case "rolling_stationary":
@@ -146,6 +153,15 @@ interface Pending {
 }
 
 const NONE: Pending = { type: "none", time: Infinity, i: -1, j: -1 }
+
+const POCKET_EVENT_TYPE: Record<PocketEvent, EventType> = {
+  [PocketEvent.none]: "none",
+  [PocketEvent.drop]: "ball_drop",
+  [PocketEvent.capture]: "ball_pocket",
+  // Reaching the wall around the cut is a capture.
+  [PocketEvent.wall]: "ball_pocket",
+  [PocketEvent.edge]: "ball_pocket_edge",
+}
 
 export function simulate(shot: Shot): ShotResult {
   const config = shot.config ?? DEFAULT_MODEL_CONFIG
@@ -175,15 +191,27 @@ export function simulate(shot: Shot): ShotResult {
   const linT = new Float64Array(n * nL).fill(NaN)
   const circT = new Float64Array(n * nC).fill(NaN)
   const pockT = new Float64Array(n * nP).fill(NaN)
+  // What each cached pocket time is (a PocketEvent).
+  const pockKind = new Uint8Array(n * nP)
   const trT = new Float64Array(n)
   const trType: (TransitionType | null)[] = new Array(n).fill(null)
   // 3D: per-ball landing and leaving-the-table times (NaN = recompute).
   const tableT = new Float64Array(n).fill(NaN)
   const offT = new Float64Array(n).fill(NaN)
+  // A ball coming down over a pocket's slate cut doesn't land: it falls in.
+  const interiors = pockets.filter((pk) => pk.interior)
+  const overCut = (x: number, y: number) => interiors.some((pk) => (x - pk.center[0]) ** 2 + (y - pk.center[1]) ** 2 < pk.radius ** 2)
   const landing = (i: number): number => {
     let v = tableT[i]!
     if (v !== v) {
-      v = threeD ? t + landingTime(current(i), balls[i]!.p) : Infinity
+      v = Infinity
+      if (threeD) {
+        const s = current(i)
+        const dt = landingTime(s, balls[i]!.p)
+        // (A ball just off a pocket's edge, at z = R and not yet falling, isn't landing.)
+        const leaving = dt <= 0 && !(s.v[2] < 0)
+        if (dt !== Infinity && !leaving && !overCut(s.r[0] + s.v[0] * dt, s.r[1] + s.v[1] * dt)) v = t + dt
+      }
       tableT[i] = v
     }
     return v
@@ -293,7 +321,7 @@ export function simulate(shot: Shot): ShotResult {
   /** Earliest pending entry of a ball–object cache, recomputing only rows that changed. */
   function earliest(
     c: ObjectCache, type: EventType,
-    time: (s: BallState, p: BallParams, k: number) => number,
+    time: (s: BallState, p: BallParams, k: number, i: number) => number,
     gap: (s: BallState, p: BallParams, k: number) => number,
   ): Pending {
     const { times, m, rowT, rowK } = c
@@ -309,8 +337,8 @@ export function simulate(shot: Shot): ShotResult {
           if (v !== v) {
             const s = current(i)
             const p = balls[i]!.p
-            if (isNontranslating(s.s) || gap(s, p, k) > reach(i)) v = Infinity
-            else v = t + time(s, p, k)
+            if (isNontranslating(s.s) || s.s === MotionState.pivoting || gap(s, p, k) > reach(i)) v = Infinity
+            else v = t + time(s, p, k, i)
             times[idx] = v
           }
           if (v < rt) {
@@ -347,8 +375,20 @@ export function simulate(shot: Shot): ShotResult {
       }))
     candidates.push(earliest(circ, "ball_circular_cushion", (s, p, k) => circularCushionTime(s, p, circular[k]!),
       (s, p, k) => Math.hypot(s.r[0] - circular[k]!.center[0], s.r[1] - circular[k]!.center[1]) - circular[k]!.radius - p.R))
-    candidates.push(earliest(pock, "ball_pocket", (s, _p, k) => pocketTime(s, _p, pockets[k]!),
-      (s, _p, k) => Math.hypot(s.r[0] - pockets[k]!.center[0], s.r[1] - pockets[k]!.center[1]) - pockets[k]!.radius))
+    const pk = earliest(pock, "ball_pocket",
+      (s, p, k, i) => {
+        const pocket = pockets[k]!
+        if (!(threeD && pocket.interior)) {
+          pockKind[i * nP + k] = PocketEvent.capture
+          return pocketTime(s, p, pocket)
+        }
+        const e = pocketInteriorTime(s, p, pocket)
+        pockKind[i * nP + k] = e.kind
+        return e.time
+      },
+      (s, _p, k) => Math.hypot(s.r[0] - pockets[k]!.center[0], s.r[1] - pockets[k]!.center[1]) - pockets[k]!.radius)
+    if (pk.i >= 0) pk.type = POCKET_EVENT_TYPE[pockKind[pk.i * nP + pk.j] as PocketEvent]
+    candidates.push(pk)
     let bb = NONE
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
@@ -357,7 +397,9 @@ export function simulate(shot: Shot): ShotResult {
         if (v !== v) {
           const a = current(i)
           const b = current(j)
-          if (isOutOfPlay(a.s) || isOutOfPlay(b.s) || (isNontranslating(a.s) && isNontranslating(b.s))) v = Infinity
+          // A ball tipping into a pocket is left alone until it lets go of the edge.
+          if (isOutOfPlay(a.s) || isOutOfPlay(b.s) || a.s === MotionState.pivoting || b.s === MotionState.pivoting) v = Infinity
+          else if (isNontranslating(a.s) && isNontranslating(b.s)) v = Infinity
           else if (ballsOverlap(a, b, balls[i]!.p.R, balls[j]!.p.R)) v = t
           else {
             const gap = Math.hypot(a.r[0] - b.r[0], a.r[1] - b.r[1]) - balls[i]!.p.R - balls[j]!.p.R
@@ -436,6 +478,14 @@ export function simulate(shot: Shot): ShotResult {
         post = [resolvePocket(pockets[ev.j]!)]
         ids = [bi.id, pockets[ev.j]!.id]
         break
+      case "ball_drop":
+        post = [resolveDrop(current(ev.i), pockets[ev.j]!, bi.p)]
+        ids = [bi.id, pockets[ev.j]!.id]
+        break
+      case "ball_pocket_edge":
+        post = [resolvePocketEdge(current(ev.i), pockets[ev.j]!, bi.p, config.ballTable)]
+        ids = [bi.id, pockets[ev.j]!.id]
+        break
       case "ball_table":
         post = [resolveBallTable(current(ev.i), bi.p, config.ballTable)]
         ids = [bi.id]
@@ -445,7 +495,7 @@ export function simulate(shot: Shot): ShotResult {
         ids = [bi.id]
         break
       default:
-        post = [applyTransition(current(ev.i), ev.type as TransitionType)]
+        post = [applyTransition(current(ev.i), ev.type as TransitionType, bi.p)]
         ids = [bi.id]
     }
     const states: Record<string, BallState> = {}
@@ -457,7 +507,9 @@ export function simulate(shot: Shot): ShotResult {
       refreshTransition(i)
       invalidate(i)
     })
-    events.push({ type: ev.type, time: t, ids, states })
+    // A ball caught at the pocket's edge is pocketed there.
+    const type = ev.type === "ball_pocket_edge" && post[0]!.s === MotionState.pocketed ? "ball_pocket" : ev.type
+    events.push({ type, time: t, ids, states })
     if (count + 1 >= maxEvents) {
       truncated = true
       for (const b of balls) {

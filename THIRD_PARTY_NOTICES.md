@@ -37,6 +37,7 @@ Before adding anything here, check the licensing policy in
 
 ## Published works implemented from their mathematics (cited, no code copied)
 
+- Carlson's symmetric elliptic integral R_F by the duplication theorem (B. C. Carlson, Numerical Algorithms 10, 1995): `packages/physics/src/math/elliptic.ts`.
 - Ferrari's method and Descartes' factorization for quartic equations, and
   Cardano's/Viète's method for cubic equations: classical mathematics.
 - Kahan's accurate `a*b - c*d` and Veltkamp/Dekker error-free product: classical

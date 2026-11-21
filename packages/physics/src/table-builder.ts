@@ -32,6 +32,21 @@ export interface TableSpec {
   sidePocketDepth: number
   sidePocketRadius: number
   sideJawRadius: number
+  /** Pocket interiors (shelf, slate cut, back wall). Without it, pockets are capture circles. */
+  pocketInterior?: PocketInteriorSpec
+}
+
+export interface PocketInteriorSpec {
+  /** Shelf: from the middle of the mouth (lip to lip) to the slate cut, m (WPA §9). */
+  cornerShelf: number
+  sideShelf: number
+  /**
+   * Back draft (vertical pocket angle), degrees: the facings lean back from
+   * the nose, so at the slate they sit cushionHeight·tan(angle) behind it.
+   */
+  backDraft: number
+  /** Top of the rail (and of the pocket's back wall) above the slate, m. */
+  railHeight: number
 }
 
 /** pooltool 0.6.0's default 7-ft pocket table (used by the reference fixtures). */
@@ -87,6 +102,14 @@ export const WPA_9FT: Readonly<TableSpec> = {
   sidePocketDepth: POOLTOOL_7FT.sidePocketDepth,
   sidePocketRadius: POOLTOOL_7FT.sidePocketRadius,
   sideJawRadius: POOLTOOL_7FT.sideJawRadius,
+  pocketInterior: {
+    // WPA §9: corner shelf 1–2¼ in, side 0–⅜ in, back draft 12–15°; midpoints.
+    cornerShelf: 1.625 * INCH,
+    sideShelf: 0.1875 * INCH,
+    backDraft: 13.5,
+    // Not specified by the WPA; a typical rail cap height (estimate).
+    railHeight: 1.75 * INCH,
+  },
 }
 
 /** Pocket depth below the slate where captured balls are placed (pooltool's default). */
@@ -173,5 +196,68 @@ export function buildPocketTable(spec: TableSpec): Table {
     pocket("rt", w + cD, l + cD, spec.cornerPocketRadius),
   ]
 
+  if (spec.pocketInterior) {
+    const byId = new Map(linear.map((c) => [c.id, c]))
+    const cornerMouth = pc / Math.SQRT2
+    // Per pocket: where its mouth is, the direction into it, its facings.
+    const layout: [string, [number, number], [number, number], number, [string, string], number][] = [
+      ["lb", [0, 0], [-1, -1], cornerMouth, ["1", "2"], spec.pocketInterior.cornerShelf],
+      ["lt", [0, l], [-1, 1], cornerMouth, ["7", "8"], spec.pocketInterior.cornerShelf],
+      ["rb", [w, 0], [1, -1], cornerMouth, ["16", "17"], spec.pocketInterior.cornerShelf],
+      ["rt", [w, l], [1, 1], cornerMouth, ["10", "11"], spec.pocketInterior.cornerShelf],
+      ["lc", [0, l / 2], [-1, 0], 0, ["4", "5"], spec.pocketInterior.sideShelf],
+      ["rc", [w, l / 2], [1, 0], 0, ["13", "14"], spec.pocketInterior.sideShelf],
+    ]
+    const drop = spec.cushionHeight * Math.tan((spec.pocketInterior.backDraft * Math.PI) / 180)
+    for (const [id, corner, dir, back, facings, shelf] of layout) {
+      const pocket = pockets.find((p) => p.id === id)!
+      const cut = slateCut(corner, dir, back, facings.map((f) => byId.get(f)!) as [LinearCushion, LinearCushion], shelf, drop)
+      pocket.center = [cut.center[0], cut.center[1], 0]
+      pocket.radius = cut.radius
+      pocket.interior = { open: cut.open, openCos: cut.openCos, wallTop: spec.pocketInterior.railHeight }
+    }
+  }
+
   return { linear, circular, pockets, size: { w, l } }
+}
+
+/**
+ * The pocket cut in the slate: the circle whose nearest point to the table is
+ * the shelf depth behind the middle of the mouth, and which is tangent to both
+ * facings where they meet the slate (each nose line moved back by `drop`).
+ * `corner` and `back` place the mouth's middle at corner − back·dir̂.
+ */
+function slateCut(
+  corner: [number, number], dir: [number, number], back: number, facings: [LinearCushion, LinearCushion], shelf: number, drop: number,
+): { center: [number, number]; radius: number; open: [number, number]; openCos: number } {
+  const len = Math.hypot(dir[0], dir[1])
+  const a: [number, number] = [dir[0] / len, dir[1] / len]
+  const m: [number, number] = [corner[0] - back * a[0], corner[1] - back * a[1]]
+  let radius = Infinity
+  let openCos = 0
+  for (const f of facings) {
+    const dx = f.p2[0] - f.p1[0]
+    const dy = f.p2[1] - f.p1[1]
+    const fl = Math.hypot(dx, dy)
+    // Unit normal of the facing line, toward the mouth's middle.
+    let nx = -dy / fl
+    let ny = dx / fl
+    let d0 = (m[0] - f.p1[0]) * nx + (m[1] - f.p1[1]) * ny
+    if (d0 < 0) {
+      nx = -nx
+      ny = -ny
+      d0 = -d0
+    }
+    // Center m + (shelf + ρ) â at distance ρ from the moved-back line: d0 + drop + (shelf + ρ) k = ρ.
+    const k = a[0] * nx + a[1] * ny
+    const rho = (d0 + drop + shelf * k) / (1 - k)
+    radius = Math.min(radius, rho)
+    // From the center, the tangent point lies along −n̂, at angle acos(k) from
+    // the direction to the table (−â). The edge is open (nothing above it)
+    // only up to where the circle passes under the facing's nose line, at
+    // distance ρ − drop from the center: acos((ρ − drop)/ρ) short of that.
+    openCos = Math.cos(Math.acos(k) - Math.acos((rho - drop) / rho))
+  }
+  const s = shelf + radius
+  return { center: [m[0] + s * a[0], m[1] + s * a[1]], radius, open: [-a[0], -a[1]], openCos }
 }

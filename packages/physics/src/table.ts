@@ -28,12 +28,35 @@ export interface CircularCushion {
   radius: number
 }
 
-/** Phase 1 pocket: a ball is captured when its center enters the circle. */
+/**
+ * A pocket. Without `interior`, a ball is captured when its center enters the
+ * circle (pooltool's model). With it, the circle is the pocket cut in the
+ * slate (see PocketInterior).
+ */
 export interface Pocket {
   id: string
   center: Vec3
   radius: number
+  /** Depth below the slate where a captured ball is placed. */
   depth: number
+  interior?: PocketInterior
+}
+
+/**
+ * The inside of a pocket (3D mode; in 2D a ball is captured when its center
+ * crosses the cut). The pocket's circle is the cut in the slate, with its
+ * edge at z = 0. Toward the table, between the facings' noses, the edge is
+ * open: a ball rolls over it and drops. Elsewhere, above the slate, the cut
+ * continues up as a wall (the facings, then the liner at the back), to
+ * `wallTop`.
+ */
+export interface PocketInterior {
+  /** Unit vector in the table plane from the circle's center toward the table. */
+  open: [number, number]
+  /** Edge points whose direction from the center is within this cosine of `open` are open (no wall). */
+  openCos: number
+  /** Height of the top of the back wall above the slate, m. */
+  wallTop: number
 }
 
 export interface Table {

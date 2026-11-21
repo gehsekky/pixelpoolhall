@@ -944,7 +944,7 @@ function advanceReplay(m: Extract<Mode, { kind: "replay" }>, dt: number): void {
 resize()
 newGame("9-ball")
 // Dev-only hook for scripted browser checks.
-if (import.meta.env.DEV) Object.assign(globalThis, { __pp: { aim, get game() { return game }, get mode() { return mode.kind }, camera, controls, setOpponent: (o: Opponent) => (opponent = o) } })
+if (import.meta.env.DEV) Object.assign(globalThis, { __pp: { aim, shoot, get game() { return game }, get mode() { return mode.kind }, camera, controls, setOpponent: (o: Opponent) => (opponent = o) } })
 drawSpin()
 resize()
 requestAnimationFrame(frame)

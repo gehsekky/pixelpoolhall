@@ -136,7 +136,7 @@ Because the game is free and self-hosted, the licenses of the things we use set 
 
 ### Phase 3: Accuracy beyond the references
 - ✅ **3D:** airborne balls, jump shots, landings, balls hopping the rail and leaving the table (`dim: "3d"`, the game's default). It matches pooltool's 3D engine on all 340 fixture shots: the same events, times within 2.1e-9 s, final positions within 1.9 nm. See physics-design.md, "3D mode".
-- **Pocket interior:** shelf, drop edge, back facing, rattle.
+- ✅ **Pocket interior:** WPA shelf and slate cut. Balls tip over the edge (or skim past it), fly to the back, hit the edge and can climb back out; slow balls hang on the shelf. See physics-design.md, "Pockets: interior model".
 - ✅ **Accuracy options:** Mathavan's numerical ball–ball (2014) and ball–cushion (2010) models are selectable (`GameOptions.models`). They match pooltool's implementations, with three fixes for steps pooltool left to rounding noise, on all 279 fixture shots: the same events, times within 9.7e-10 s. See physics-design.md, "Mathavan collision models".
 - **Fitting to real data:** collect measured shot data (high-speed video, Alciatore's data) and fit our parameters to it.
 - **Optional extras:** cloth nap and table slope.

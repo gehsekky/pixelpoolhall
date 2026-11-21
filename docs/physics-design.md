@@ -278,18 +278,52 @@ All three are O(step size), the model's own discretization error, and they make 
   - Each collision resolved alone matches within 1.5e-12.
 - **Speed:** 2–3× the default models: 0.15–0.3 ms for typical shots, 4.1 ms for a break. A hard AI plan takes about 100 ms on average.
 
-### Pockets (Phase 3 interior model)
+### Pockets: interior model (Phase 3, as built 2026-11-21)
 
-The pocket is modeled as real geometry:
-- **Facings:** cushion segments angled at the facing angle; ball contact uses the cushion model.
-- **Jaws:** arcs (already Phase 1).
-- **Shelf:** the slate surface between the mouth and the drop edge, so a ball can roll onto the shelf and stop there.
-- **Drop edge:** a circular edge. The ball tips over when its contact point leaves the slate; it then pivots about the edge and becomes airborne.
-- **Back wall / liner:** an inelastic surface that can bounce a fast ball back toward the drop edge, so it can rattle out.
+Opt-in per table (`TableSpec.pocketInterior`; the WPA 9-ft preset, and so the game, has it; pooltool's 7-ft table keeps its capture circles, so the reference fixtures are unchanged). In 2D a ball is captured when its center crosses the slate cut. In 3D (`src/detect.ts` `pocketInteriorTime`, `src/resolve/pocket.ts`, `src/pivot.ts`):
 
-**Outcome:** the ball is pocketed once its center falls below `z = −R` inside the pocket volume.
+**Geometry** (`table-builder.ts`, from WPA §9 midpoints):
+- **Slate cut:** the pocket's circle is the hole in the slate (edge at z = 0). Its nearest point to the table is the shelf behind the middle of the mouth: 1⅝ in at the corners, 3⁄16 in at the sides. It is tangent to both facings where they meet the slate. With a 13.5° back draft, each facing's foot is cushionHeight·tan 13.5° ≈ 9 mm behind its nose. The result is a cut about 4.3 in across at the corners and 4.5 in at the sides.
+- **Open edge:** toward the table, between the facings' noses, nothing is above the edge. Elsewhere the cut continues up as a wall (the facings' undercut faces, then the liner) to the rail top (1¾ in, an estimate).
 
-**Validation:** compare the speed and angle at which balls rattle out against measurements; Alciatore has pocket-tolerance data.
+**Events:**
+- **`ball_drop`:** a ball on the slate whose center crosses the edge, moving inward.
+  - Fast across the edge (u² ≥ gR), it flies off.
+  - Otherwise it **tips over the edge** (`pivoting`, motion state 7). It is a rigid rotation about the edge: friction takes up any slip at once, as on landing, conserving angular momentum about the contact. Its motion along the edge carries it around the edge circle.
+  - In the tilt plane it is an inverted pendulum under gravity and the outward pull a = v∥²/ρ of following the curve: (7/5)Rθ̈ = g sin θ − a cos θ.
+  - Timing comes in closed form from Carlson's elliptic integral R_F. The ball lets go where the edge's push g cos θ + a sin θ − RΩ² reaches zero; with no motion along the edge, that is cos θ = (10 + 7u²/gR)/17.
+  - A ball moving mostly along the edge can't get past the balance angle tan β = a/g. It skims the pocket and carries on (`canTip`).
+- **`pivoting_airborne`:** it lets go of the edge.
+- **`ball_pocket_edge`:** a ball in the air hits the open edge (a sharp, cloth-covered edge).
+  - It's a frictional inelastic impulse along the contact normal, using the landing's e_t and μs.
+  - The contact is found by conservative advancement with a second-order bound, so it never steps past a contact; dense sampling in the tests confirms it.
+  - A ball that settles onto the edge from inside the cut (rebound under `minBounceHeight`) rolls in: captured.
+  - A ball that settles while within 0.1 mm of the slate's height rides over the edge: on the slate if heading out, tipping if heading in.
+- **`ball_pocket` (capture):** the center falls to the slate's level inside the cut, or the ball reaches the wall below the rail top. WPA §10 requires liners to send balls down. The captured ball is placed at the cut's center at −depth.
+- **Landings** over the cut don't happen; the ball falls in. Leaving the table through a pocket counts only once the ball flies out of the cut.
+
+**Not modeled:**
+- a ball sliding around the curved wall, or sustained rolling along the inside of the edge (both end in capture);
+- other balls touching a ball while it tips (a few tens of milliseconds);
+- spin effects of the edge beyond rolling.
+
+**Checks** (`test/pocket-interior.test.ts`):
+- **Geometry:** shelf, tangency and the ends of the open arc against the WPA numbers.
+- **Pivot:** time against direct integration; release angle against the closed form; energy conserved while tipping.
+- **Shots:** straight in at 0.26–7 m/s, all pocketed (slow ones tip, fast ones fly to the back). Below about 0.25 m/s the ball stops on the shelf, more than an inch past the mouth. A glancing ball skims a side pocket; a fast one drops, hits the far edge and climbs back out.
+- **Invariants:** 270 shots into and across every pocket. Mechanical energy never increases; no ball is below the slate outside a cut; every ball ends at rest, pocketed or off the table, in under 100 events.
+
+**Comparison with Alciatore's pocket analysis** (TP 3.5–3.8, geometric: approach angle limits with rattle allowances; his side-pocket parameters equal our WPA midpoints):
+
+| Steepest approach angle that can still be pocketed | His analysis | Ours |
+|---|---|---|
+| Side pocket, slow | 68.3° | 66° |
+| Side pocket, fast | 50.7° | 77° (ours includes balls that go in off the facings) |
+| Corner pocket, fast | 59.8° | 50° |
+
+Straight in, our effective target is 2.97 in (side, slow) and 2.66 in (corner, slow). Fitting these to measured pocketing data is part of the data-fitting step.
+
+**Cost:** the computer's hard plan takes about 80 ms either way. Edge searches cost about as much as the capture circle's checks once the second-order step bound is used.
 
 ---
 

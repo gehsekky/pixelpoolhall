@@ -8,6 +8,7 @@
  */
 import { addScaled, copy, cross, norm, slipVelocity, unit, type Vec3, Z_HAT } from "./math/vec3.ts"
 import { spinFriction, type BallParams } from "./params.ts"
+import { pivotKinematics, separation, tiltAt, type Pivot } from "./pivot.ts"
 
 export const MotionState = {
   stationary: 0,
@@ -17,6 +18,8 @@ export const MotionState = {
   pocketed: 4,
   airborne: 5,
   offTable: 6,
+  /** Tipping over the edge of a pocket's slate cut (see pivot.ts). Not a pooltool state. */
+  pivoting: 7,
 } as const
 export type MotionState = (typeof MotionState)[keyof typeof MotionState]
 
@@ -30,9 +33,18 @@ export interface BallState {
   v: Vec3
   w: Vec3
   s: MotionState
+  /** While pivoting: the pivot, from which the state at any later time follows. */
+  pivot?: Pivot
 }
 
-export const cloneState = (b: BallState): BallState => ({ r: copy(b.r), v: copy(b.v), w: copy(b.w), s: b.s })
+export function cloneState(b: BallState): BallState {
+  const out: BallState = { r: copy(b.r), v: copy(b.v), w: copy(b.w), s: b.s }
+  if (b.pivot) {
+    out.pivot = { ...b.pivot, center: [b.pivot.center[0], b.pivot.center[1]] }
+    if (b.pivot.release) out.pivot.release = { ...b.pivot.release }
+  }
+  return out
+}
 
 /** Speeds at or below this count as zero when labeling a state (pooltool's const.EPS). */
 export const EPS = Number.EPSILON * 100
@@ -91,6 +103,12 @@ export function evolve(b: BallState, p: BallParams, dt: number): BallState {
         w: copy(w),
         s,
       }
+    case MotionState.pivoting: {
+      const pv = b.pivot!
+      const tau = pv.tau + dt
+      const k = pivotKinematics(pv, tiltAt(tau, pv, p), tau, p)
+      return { ...k, s, pivot: { ...pv, tau } }
+    }
     default:
       return cloneState(b)
   }
@@ -104,7 +122,7 @@ export const spinTime = (b: BallState, p: BallParams): number => {
   return usp === 0 ? Infinity : (Math.abs(b.w[2]) * 2 * p.R) / (5 * usp * p.g)
 }
 
-export type TransitionType = "sliding_rolling" | "rolling_spinning" | "rolling_stationary" | "spinning_stationary"
+export type TransitionType = "sliding_rolling" | "rolling_spinning" | "rolling_stationary" | "spinning_stationary" | "pivoting_airborne"
 
 /** The ball's next transition, as a delay from its current state (Infinity if none). */
 export function nextTransition(b: BallState, p: BallParams): { type: TransitionType; dt: number } | null {
@@ -117,13 +135,24 @@ export function nextTransition(b: BallState, p: BallParams): { type: TransitionT
     }
     case MotionState.spinning:
       return { type: "spinning_stationary", dt: spinTime(b, p) }
+    case MotionState.pivoting:
+      return { type: "pivoting_airborne", dt: Math.max(0, separation(b.pivot!, p).tau - b.pivot!.tau) }
     default:
       return null
   }
 }
 
+/** The state of a pivoting ball as it leaves the edge: airborne. */
+function leaveEdge(b: BallState, p: BallParams): BallState {
+  const pv = b.pivot!
+  const end = separation(pv, p)
+  const k = pivotKinematics(pv, end.theta, end.tau, p)
+  return { ...k, s: MotionState.airborne }
+}
+
 /** Apply a transition's state change; zeroes the components the new state forbids. */
-export function applyTransition(b: BallState, type: TransitionType): BallState {
+export function applyTransition(b: BallState, type: TransitionType, p?: BallParams): BallState {
+  if (type === "pivoting_airborne") return leaveEdge(b, p!)
   const out = cloneState(b)
   switch (type) {
     case "sliding_rolling":

@@ -13,9 +13,9 @@
  */
 import { createRoots, solveQuadratic, solveQuartic, type Roots } from "./math/roots/index.ts"
 import { isRealRoot, smallestNonnegativeReal } from "./math/roots/select.ts"
-import { EPS, halfAcceleration, isNontranslating, isOutOfPlay, MotionState, type BallState } from "./motion.ts"
+import { EPS, evolve, halfAcceleration, isNontranslating, isOutOfPlay, MotionState, type BallState } from "./motion.ts"
 import type { BallParams } from "./params.ts"
-import { cushionHeight, CushionSide, lineCoefficients, type CircularCushion, type LinearCushion, type Pocket } from "./table.ts"
+import { cushionHeight, CushionSide, lineCoefficients, type CircularCushion, type LinearCushion, type Pocket, type PocketInterior } from "./table.ts"
 
 const roots: Roots = createRoots()
 
@@ -228,15 +228,18 @@ export function landingTime(b: BallState, p: BallParams): number {
   if (b.s !== MotionState.airborne) return Infinity
   if (p.g === 0) return Infinity
   solveQuadratic(-0.5 * p.g, b.v[2], b.r[2] - p.R, roots)
+  // Real roots only: a ball below the slate's level (in a pocket) never comes down to it.
   let t = -Infinity
-  for (let i = 0; i < roots.count; i++) t = Math.max(t, roots.re[i]!)
-  return t
+  for (let i = 0; i < roots.count; i++) if (roots.im[i] === 0) t = Math.max(t, roots.re[i]!)
+  // (Both roots in the past: a ball under the slate's level, in a pocket.)
+  return t < 0 ? Infinity : t
 }
 
 /**
  * Time until an airborne ball leaves the table: its center crosses the edge
  * of the playing surface, or, if its flight carries it into a pocket's
- * circle first, the far side of that circle (pooltool's ball_off_table_time).
+ * circle first, the far side of that circle (pooltool's ball_off_table_time;
+ * for a pocket with an interior, being over its cut at the crossing is enough).
  */
 export function offTableTime(b: BallState, p: BallParams, size: { w: number; l: number }, pockets: readonly Pocket[]): number {
   if (b.s !== MotionState.airborne) return Infinity
@@ -262,7 +265,14 @@ export function offTableTime(b: BallState, p: BallParams, size: { w: number; l: 
     const root = Math.sqrt(disc)
     const tIn = (-B - root) / (2 * A)
     const tOut = (-B + root) / (2 * A)
-    if (tOut <= tEdge || tIn > tLand) continue
+    if (tOut <= tEdge) continue
+    // Over a pocket's slate cut when crossing the edge, the ball is in the
+    // pocket (it falls, or meets the back wall) until it flies out of the cut.
+    if (pk.interior) {
+      const ex = px + vx * tEdge
+      const ey = py + vy * tEdge
+      if (ex * ex + ey * ey > pk.radius * pk.radius * (1 + 1e-9)) continue
+    } else if (tIn > tLand) continue
     tOff = Math.max(tOff, tOut)
   }
   return tOff
@@ -298,4 +308,146 @@ export function airbornePocketTime(b: BallState, p: BallParams, pocket: Pocket):
   if (h0 < p.R) return Infinity
   if (hf > (7 / 5) * p.R) return Infinity
   return (r1 + r2) / 2
+}
+
+// ---- Pocket interiors (3D; see PocketInterior) ----
+
+/** What a ball meets next in a pocket's interior. */
+export const PocketEvent = { none: 0, drop: 1, capture: 2, wall: 3, edge: 4 } as const
+export type PocketEvent = (typeof PocketEvent)[keyof typeof PocketEvent]
+
+/** A ball closer to the edge than this (m) is touching it. */
+const EDGE_TOL = 1e-9
+
+/**
+ * Distance from a point (relative to the cut's center) to the open part of
+ * the edge (the arc of the circle of radius ρ at z = 0 facing the table),
+ * and the unit vector from the nearest edge point to the point.
+ */
+function openEdgeDistance(x: number, y: number, z: number, rho: number, pk: PocketInterior, dir: Float64Array): number {
+  const h = Math.hypot(x, y)
+  const [ox, oy] = pk.open
+  let qx: number
+  let qy: number
+  if (h > 0 && (x * ox + y * oy) / h >= pk.openCos) {
+    qx = (rho * x) / h
+    qy = (rho * y) / h
+  } else {
+    // Nearest end of the arc.
+    const s = Math.sqrt(Math.max(0, 1 - pk.openCos * pk.openCos))
+    const ax = rho * (pk.openCos * ox - s * oy)
+    const ay = rho * (pk.openCos * oy + s * ox)
+    const bx = rho * (pk.openCos * ox + s * oy)
+    const by = rho * (pk.openCos * oy - s * ox)
+    const useA = (x - ax) ** 2 + (y - ay) ** 2 <= (x - bx) ** 2 + (y - by) ** 2
+    qx = useA ? ax : bx
+    qy = useA ? ay : by
+  }
+  const d = Math.hypot(x - qx, y - qy, z)
+  dir[0] = (x - qx) / d
+  dir[1] = (y - qy) / d
+  dir[2] = z / d
+  return d
+}
+
+const edgeDir = new Float64Array(3)
+
+/**
+ * When an airborne ball touches the open edge, within [0, T]. The gap
+ * d(t) = distance − R has d'' ≤ g + |v|²/R while the ball is clear of the
+ * edge (the distance to a curve curves at most 1/distance), so
+ *   d(t + s) ≥ d + d' s − ½ M s²,  M = g + 2 v²max / R,
+ * and stepping to the first zero of that bound never steps past the first
+ * contact: about a Newton step when approaching, long strides when leaving.
+ * A ball that starts on the edge and is leaving it (just let go by a pivot,
+ * or bounced) is first followed in doubling steps until it is clear;
+ * pressing further in on the way is a contact.
+ */
+function edgeTime(b: BallState, p: BallParams, pocket: Pocket, T: number): number {
+  const pk = pocket.interior!
+  const [cx, cy] = pocket.center
+  const x0 = b.r[0] - cx
+  const y0 = b.r[1] - cy
+  const [vx, vy, vz] = b.v
+  const g = p.g
+  const rho = pocket.radius
+  const gap = (t: number) => openEdgeDistance(x0 + vx * t, y0 + vy * t, b.r[2] + vz * t - 0.5 * g * t * t, rho, pk, edgeDir) - p.R
+  const v2max = vx * vx + vy * vy + Math.max(vz * vz, (vz - g * T) ** 2)
+  const M = g + (2 * v2max) / p.R
+  let t = 0
+  let d = gap(0)
+  if (d < EDGE_TOL) {
+    const d0 = d
+    let step = 1e-7
+    while (d < EDGE_TOL) {
+      t += step
+      if (t > T) return Infinity
+      d = gap(t)
+      if (d < Math.min(d0, 0) - EDGE_TOL) return t
+      step *= 2
+    }
+  }
+  for (let i = 0; i < 10_000; i++) {
+    if (d < EDGE_TOL) return t
+    // d' = (unit vector from the edge) · velocity.
+    const rate = edgeDir[0] * vx + edgeDir[1] * vy + edgeDir[2] * (vz - g * t)
+    t += (rate + Math.sqrt(rate * rate + 2 * M * d)) / M
+    if (t > T) return Infinity
+    d = gap(t)
+  }
+  return t
+}
+
+/**
+ * The next event between a ball and a pocket with an interior, as a delay:
+ * - on the slate: its center reaches the edge of the cut (it starts to drop);
+ * - in the air: it hits the open edge; or it is captured: its center falls
+ *   to the slate's level inside the cut (it can no longer get back out), or
+ *   it reaches the wall around the cut;
+ * - pivoting: nothing (it is on its way in).
+ */
+export function pocketInteriorTime(b: BallState, p: BallParams, pocket: Pocket): { time: number; kind: PocketEvent } {
+  if (b.s === MotionState.pivoting) return { time: Infinity, kind: PocketEvent.none }
+  const [cx, cy] = pocket.center
+  const rho = pocket.radius
+  if (b.s !== MotionState.airborne) {
+    // Crossing inward only (a ball riding over the edge leaves the circle outward).
+    const t = circleTime(b, p, cx, cy, rho)
+    if (t === Infinity) return { time: t, kind: PocketEvent.none }
+    const at = evolve(b, p, t)
+    const inward = (at.r[0] - cx) * at.v[0] + (at.r[1] - cy) * at.v[1] < 0
+    return inward ? { time: t, kind: PocketEvent.drop } : { time: Infinity, kind: PocketEvent.none }
+  }
+  const pk = pocket.interior!
+  const [x0, y0, z0] = [b.r[0] - cx, b.r[1] - cy, b.r[2]]
+  const [vx, vy, vz] = b.v
+  const zAt = (t: number) => z0 + vz * t - 0.5 * p.g * t * t
+  let best = { time: Infinity, kind: PocketEvent.none as PocketEvent }
+  // Capture: the center falls to the slate's level inside the cut.
+  const tz = z0 <= 0 ? 0 : (vz + Math.sqrt(vz * vz + 2 * p.g * z0)) / p.g
+  if ((x0 + vx * tz) ** 2 + (y0 + vy * tz) ** 2 < rho * rho) best = { time: tz, kind: PocketEvent.capture }
+  // The wall around the cut above the slate (the facings' undercut faces and
+  // the liner at the back): the center's distance from the axis grows to
+  // ρ − R where there is wall, or to ρ outside the open arc (a ball slipping
+  // past the end of the open edge). Below the rail's top, either sends the
+  // ball down into the pocket (WPA §10): captured.
+  const A = vx * vx + vy * vy
+  if (A > 0) {
+    const B = 2 * (x0 * vx + y0 * vy)
+    for (const dist of [rho - p.R, rho]) {
+      const C = x0 * x0 + y0 * y0 - dist * dist
+      const disc = B * B - 4 * A * C
+      if (disc < 0) continue
+      const t = (-B + Math.sqrt(disc)) / (2 * A)
+      const x = x0 + vx * t
+      const y = y0 + vy * t
+      const z = zAt(t)
+      const open = (x * pk.open[0] + y * pk.open[1]) / Math.hypot(x, y) >= pk.openCos
+      if (t > 1e-12 && t < best.time && !open && z > 0 && z < pk.wallTop) best = { time: t, kind: PocketEvent.wall }
+    }
+  }
+  // The open edge, before either.
+  const te = edgeTime(b, p, pocket, Math.min(best.time, tz))
+  if (te < best.time) best = { time: te, kind: PocketEvent.edge }
+  return best
 }
