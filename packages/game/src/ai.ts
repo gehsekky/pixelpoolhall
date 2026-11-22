@@ -718,7 +718,9 @@ export function planShot(game: Game, level: AiLevel, rng: Rng): AiPlan {
     }
   }
 
-  cands.sort((p, q) => q.value - p.value)
+  // On a tie, an intended shot beats a safety that happens to score as well
+  // (e.g. a soft shot that wins by luck off several rails).
+  cands.sort((p, q) => q.value - p.value || Number(p.kind === "safety") - Number(q.kind === "safety"))
   let best = cands[0]!
   if (level.finalists > 0 && level.robustSamples > 0) {
     // Finalists: the best pots and the best safeties, re-run under our own noise.

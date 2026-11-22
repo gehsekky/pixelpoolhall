@@ -48,6 +48,19 @@ Before adding anything here, check the licensing policy in
 - D. Alciatore, technical proofs A-5, A-6, A-14, A-30, A-31: ball–ball
   friction/throw, cue strike, squirt.
 
+## Measured data (facts, cited; no text, figures or code copied)
+
+Used in `packages/physics/test/measured/data.ts` to validate and fit parameters:
+
+- S. Mathavan, M. R. Jackson, R. M. Parkin, "Application of high-speed imaging
+  to determine the dynamics of billiards", Am. J. Phys. 77(9), 788–794 (2009):
+  cloth friction, cushion rebound speeds, ball–ball speeds.
+- D. G. Alciatore, TP B.11 (2010), rail rebound angles measured with Bob
+  Jewett; TP B.3 (2008), throw measurements by Colin Colenso.
+- S. Mathavan, M. R. Jackson, R. M. Parkin, "A theoretical analysis of billiard
+  ball dynamics under cushion impacts", Proc. IMechE C 224 (2010): their fitted
+  cushion values, cited for comparison.
+
 ## Rules and specifications (implemented from their substance, no text copied)
 
 - World Pool-Billiard Association, "Rules of Play" and "Regulations", effective

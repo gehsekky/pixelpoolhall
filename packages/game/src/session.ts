@@ -5,8 +5,8 @@
  */
 import {
   buildPocketTable,
-  DEFAULT_BALL_PARAMS,
-  DEFAULT_MODEL_CONFIG,
+  MEASURED_BALL_PARAMS,
+  MEASURED_MODEL_CONFIG,
   MotionState,
   simulate,
   trajectories,
@@ -29,6 +29,7 @@ import { CUE, other, type Call, type Discipline, type GameState, type Option, ty
 export interface GameOptions {
   discipline: Discipline
   table?: TableSpec
+  /** Ball, cloth and cushion parameters. Default: fitted to measured data for the cushion model in use. */
   ballParams?: BallParams
   seed?: number
   rules?: Partial<RuleOptions>
@@ -106,16 +107,17 @@ export class Game {
     this.discipline = opts.discipline
     this.dim = opts.dim ?? "3d"
     this.models = {
-      ballBall: opts.models?.ballBall ?? DEFAULT_MODEL_CONFIG.ballBall.model,
-      cushion: opts.models?.cushion ?? DEFAULT_MODEL_CONFIG.cushion.model,
+      ballBall: opts.models?.ballBall ?? MEASURED_MODEL_CONFIG.ballBall.model,
+      cushion: opts.models?.cushion ?? MEASURED_MODEL_CONFIG.cushion.model,
     }
+    // Settings fitted to measured data (the physics package's MEASURED_*).
     this.config = {
-      ...DEFAULT_MODEL_CONFIG,
-      ballBall: { ...DEFAULT_MODEL_CONFIG.ballBall, model: this.models.ballBall },
-      cushion: { ...DEFAULT_MODEL_CONFIG.cushion, model: this.models.cushion },
+      ...MEASURED_MODEL_CONFIG,
+      ballBall: { ...MEASURED_MODEL_CONFIG.ballBall, model: this.models.ballBall },
+      cushion: { ...MEASURED_MODEL_CONFIG.cushion, model: this.models.cushion },
     }
     this.spec = opts.table ?? WPA_9FT
-    this.params = opts.ballParams ?? DEFAULT_BALL_PARAMS
+    this.params = opts.ballParams ?? MEASURED_BALL_PARAMS[this.models.cushion]
     this.table = buildPocketTable(this.spec)
     this.layout = layoutFor(
       this.spec,

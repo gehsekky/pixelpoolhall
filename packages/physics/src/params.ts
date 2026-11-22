@@ -43,6 +43,21 @@ export const DEFAULT_BALL_PARAMS: Readonly<BallParams> = {
   g: 9.81,
 }
 
+/**
+ * Ball parameters fitted to measured data, for each cushion model
+ * (docs/physics-design.md, "Measured data"; `node test/measured-report.ts`).
+ * The cushion's restitution and friction are fitted by least squares to the
+ * rebound angles Alciatore and Jewett measured on a pool table (TP B.11, a
+ * rolling ball with no English, 10–80° from the rail, angles once the ball
+ * has finished curving). The rest are pooltool's defaults, which the
+ * measurements support or can't improve (ball–ball speeds, cloth sliding
+ * friction; see the docs).
+ */
+export const MEASURED_BALL_PARAMS: Readonly<Record<"stronge" | "mathavan", Readonly<BallParams>>> = {
+  stronge: { ...DEFAULT_BALL_PARAMS, e_c: 0.98, f_c: 0.14 },
+  mathavan: { ...DEFAULT_BALL_PARAMS, e_c: 0.79, f_c: 0.17 },
+}
+
 /** Spinning (about the vertical) friction coefficient. */
 export const spinFriction = (p: BallParams): number => p.u_sp_proportionality * p.R
 
@@ -101,4 +116,17 @@ export const DEFAULT_MODEL_CONFIG: Readonly<ModelConfig> = {
   cushion: { model: "stronge", omegaRatio: 1.8, maxSteps: 1000, deltaP: 0.001 },
   stickBall: { englishThrottle: 1, squirtThrottle: 1 },
   ballTable: { minBounceHeight: 0.005 },
+}
+
+/**
+ * Model settings fitted to measured data (docs/physics-design.md, "Measured
+ * data"). Throw friction: least squares to Colenso's 18 measured throws on
+ * a pool table (in Alciatore TP B.3: stun shots at 30° and 45° cuts,
+ * 4–36 km/h, with and without English). pooltool's default curve comes from
+ * Marlow's three friction measurements and gives about a third of the
+ * measured throw at medium speed.
+ */
+export const MEASURED_MODEL_CONFIG: Readonly<ModelConfig> = {
+  ...DEFAULT_MODEL_CONFIG,
+  ballBall: { ...DEFAULT_MODEL_CONFIG.ballBall, friction: { a: 0.0166, b: 0.215, c: 0.607 } },
 }

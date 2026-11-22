@@ -327,23 +327,84 @@ Straight in, our effective target is 2.97 in (side, slow) and 2.66 in (corner, s
 
 ---
 
+### Measured data (Phase 3, as built 2026-11-22)
+
+We compare the engine with published measurements of real balls, and fit parameters to them where the data supports it. The game uses the fitted values (`MEASURED_BALL_PARAMS`, `MEASURED_MODEL_CONFIG`). `DEFAULT_BALL_PARAMS` and `DEFAULT_MODEL_CONFIG` stay pooltool's defaults, which the reference fixtures use.
+
+- **Code:**
+  - The data, with sources: `packages/physics/test/measured/data.ts`.
+  - The experiments replayed in the engine (3D, Stronge or Mathavan cushion, both ball–ball models): `test/measured/experiments.ts`.
+  - The report and the least-squares fits (Nelder–Mead): `node test/measured-report.ts`.
+  - Regression tests: `test/measured.test.ts`.
+- **Licensing:** we record measured values (facts) with citations. No text, figures or code are copied.
+
+**Datasets**
+
+| Data | Source | Equipment | Used for |
+|---|---|---|---|
+| Rail rebound angles: rolling ball, no English, 10–80° from the rail; immediate (high-speed video) and effective (after the ball stops curving) | Alciatore & Jewett, 2009 (TP B.11) | pool | fitting the cushion |
+| Object-ball throw: 18 stun shots, 30° and 45° cuts, 4–36 km/h, 0 and ±50% English | Colenso, in Alciatore TP B.3 (2008) | pool | fitting throw friction |
+| Rebound speed of a rolling ball straight into a cushion, 0.28–3.5 m/s, 31 shots (given only as the authors' fitted quadratic) | Mathavan et al., Am. J. Phys. 2009 | snooker | independent check |
+| Speeds once both balls roll again after a ball–ball hit (5 shots) | Mathavan et al. 2009, Table I | snooker | check |
+| Cloth friction: sliding 0.178–0.245, rolling 0.0127–0.0129 | Mathavan et al. 2009 | snooker cloth | check |
+
+**Results** (RMS error; "fitted" = the game's parameters)
+
+| Check | pooltool's defaults | fitted |
+|---|---|---|
+| Rail angle once the ball stops curving, Stronge cushion | 1.3° (max 2.0°) | **0.8°** (max 1.7°) |
+| The same, Mathavan cushion | 3.3° (max 6.2°) | **0.8°** (max 1.1°) |
+| Snooker cushion rebound speed, Stronge (not fitted to it) | 0.28 m/s | **0.14 m/s** |
+| Throw, all 18 shots (either ball–ball model) | 1.77 in/yd | **0.66 in/yd** |
+| Ball–ball speeds once rolling (either model) | 0.036 m/s | 0.041 m/s |
+
+**Fitted values**
+
+- **Cushion, Stronge model:** e_c = 0.98, f_c = 0.14 (pooltool: 0.85 and 0.20).
+  - This is an independent confirmation: fitting Stronge to Mathavan's snooker rebound speeds gives e_c = 0.98 and f_c = 0.21. Mathavan et al. (Proc. IMechE C 224, 2010), fitting their own cushion model to the same experiments, give restitution 0.98 and cushion friction 0.14.
+- **Cushion, Mathavan model:** e_c = 0.79, f_c = 0.17. The game picks the set that matches the cushion model in use. (Fitted to the snooker speeds instead, this model gives 0.93 and 0.18, so pool and snooker cushions differ here; we use the pool data.)
+- **Throw friction:** u_b = 0.0166 + 0.215·exp(−0.607·v_rel) (pooltool: 0.00995 + 0.108·exp(−1.088·v_rel), Alciatore's fit to Marlow's three friction measurements).
+  - Our fit nearly reproduces Alciatore's own fit to the same data with his closed-form model (0.016, 0.219, 0.691), which cross-checks the harness.
+  - With pooltool's curve, medium-speed throw was about a third of what Colenso measured.
+  - Bob Jewett's independent chart (sfbilliards.com, speeds not quantified) also shows more throw at speed than pooltool's curve gives, for example 3.7° medium and 2.2° hard at a 45° cut.
+
+**What the data can't fix (known gaps)**
+
+- **Throw above the rigid-ball limit.** On a stun shot, the most throw rigid balls can give is when the surfaces stop sliding: tan(throw) = 2·tan(cut) / (7(1 + e_b)). At a 30° cut that is 3.05 in/yd (4.8°).
+  - Colenso measured 4.8 in/yd at soft speed. Jewett's chart shows about 6° near 27° and up to 3.25° at a 15° cut, where the limit is 2.2°.
+  - No friction value can produce this. Tangential compliance at the contact (the surfaces spring back) is a likely explanation. Nothing has been modeled for it yet.
+  - Outside English at 45° (measured +2.3 and +1.4 in/yd at 4 and 12 km/h) is also beyond the model.
+- **Immediate rail angles.** The video-measured angles right off the rail are 3–8° below every model and parameter set we tried. Matching them would need e_c ≈ 0.66, which contradicts the effective angles and the rebound speeds. We fit only to the effective angles, which come from where the ball next hit a rail.
+- **Cushion speed dependence.** The measured rebound speed levels off at high speed (cushion compression). Our models have a constant restitution, so they undershoot around 1–2 m/s and overshoot at 3.5 m/s.
+- **Speeds not quantified.** "Slow" in the rail data isn't quantified; we use 4 km/h, Alciatore's "soft". The Stronge angles don't depend on speed, and Mathavan's change by under 0.5° between 0.5 and 2 m/s.
+- **Rolling resistance:** kept at pooltool's 0.010. Snooker cloth measured 0.0128, and pool cloth (Simonis 860) is generally faster. No pool measurement has been found yet.
+- **Pockets:** no measured pocket acceptance data has been found yet. Alciatore's pocket analysis (TP 3.5–3.8) is geometric; see "Pockets".
+
+**Effect on the game**
+
+- More throw on medium and fast cuts. The computer opponent's throw corrections are measured in the simulation, so they follow automatically.
+- Livelier cushions.
+- AI benchmark at hard level: 9-ball potting 76% (63% before), 8-ball 82% (83%).
+- One AI change: when scores tie, an intended shot now beats a "safety" that happens to score as well. One such safety won by luck off several rails.
+
 ## Parameters
 
-All parameters live in one typed registry. Each entry records its **value, unit, source (citation) and uncertainty**. Starting defaults (pooltool / WPA), to be refined by fitting:
+All parameters live in one typed registry. Each entry records its **value, unit, source (citation) and uncertainty**. The defaults are pooltool's (and the WPA's); where the game uses a value fitted to measured data, it is listed too (see "Measured data"):
 
-| Parameter | Default | Source |
-|---|---|---|
-| Ball mass `m` | 0.170 kg | WPA spec range 5.5–6 oz |
-| Ball radius `R` | 0.028575 m | WPA 2¼″ |
-| Sliding friction `μs` | 0.20 | pooltool / Alciatore |
-| Rolling resistance `μr` | 0.010 | pooltool / Alciatore |
-| Spin decay `μsp` | ≈ 0.444·R | pooltool |
-| Ball–ball restitution `e_b` | 0.95 | pooltool / Alciatore |
-| Cushion restitution `e_c` | 0.85 | pooltool |
-| Cushion friction `f_c` | 0.20 | pooltool |
-| Stronge `ω` ratio | 1.8 | pooltool default |
-| Table restitution `e_t` | 0.5 | pooltool |
-| Cue end mass | (per cue spec) | Alciatore TP A-31 |
+| Parameter | Default | Source | Game (fitted) |
+|---|---|---|---|
+| Ball mass `m` | 0.170 kg | WPA spec range 5.5–6 oz | |
+| Ball radius `R` | 0.028575 m | WPA 2¼″ | |
+| Sliding friction `μs` | 0.20 | pooltool / Alciatore | |
+| Rolling resistance `μr` | 0.010 | pooltool / Alciatore | |
+| Spin decay `μsp` | ≈ 0.444·R | pooltool | |
+| Ball–ball restitution `e_b` | 0.95 | pooltool / Alciatore | |
+| Cushion restitution `e_c` | 0.85 | pooltool | 0.98 (Stronge), 0.79 (Mathavan) |
+| Cushion friction `f_c` | 0.20 | pooltool | 0.14 (Stronge), 0.17 (Mathavan) |
+| Stronge `ω` ratio | 1.8 | pooltool default | |
+| Table restitution `e_t` | 0.5 | pooltool | |
+| Cue end mass | (per cue spec) | Alciatore TP A-31 | |
+| Throw friction `u_b(v_rel)` | 0.00995 + 0.108·e^(−1.088 v) | Alciatore TP A-14 (Marlow's data) | 0.0166 + 0.215·e^(−0.607 v) (Colenso's throws) |
 
 ---
 
@@ -386,9 +447,8 @@ All parameters live in one typed registry. Each entry records its **value, unit,
      - **Cue tip.** pooltool's cue-strike docstring says the tip radius shifts the contact point, but 0.6.0's code doesn't apply it. We match the code, and flag it for Phase 3 fitting.
      - **Jaw normal.** pooltool takes the jaw contact normal from a point at cushion height (so it has a vertical component), while it detects jaw contact in the table plane. We match this for now.
 4. **Tests against measured data (Phase 3).**
-   - Alciatore's published measurements: throw curves, squirt, cushion rebound angles.
-   - Our own high-speed video, recorded where possible.
-   - Fit parameters by least squares, and publish the fit results as part of the docs.
+   - ✅ Published measurements (rail rebound angles, throw, cushion rebound speeds, ball–ball speeds, cloth friction), with least-squares fits. See "Measured data".
+   - Still to come: squirt, pocket acceptance, and pool-cloth rolling resistance (no usable published data found yet); our own high-speed video, where possible.
 5. **Accuracy report page.** Publish the validation results on the site. "Most accurate" should be a claim anyone can check.
 
 ---

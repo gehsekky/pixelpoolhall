@@ -5,6 +5,8 @@ export {
   DEFAULT_BALL_PARAMS,
   DEFAULT_CUE_SPECS,
   DEFAULT_MODEL_CONFIG,
+  MEASURED_BALL_PARAMS,
+  MEASURED_MODEL_CONFIG,
   type BallParams,
   type CueSpecs,
   type ModelConfig,
